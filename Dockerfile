@@ -1,38 +1,28 @@
-FROM golang:1.19-alpine AS builder
+FROM golang:1.19 AS builder
 
 WORKDIR /app
 
-# 安装编译依赖（增加更多必要依赖）
-RUN apk add --no-cache gcc musl-dev git sqlite-dev build-base
-
-# 设置Go环境变量
-ENV CGO_ENABLED=1
-ENV GOOS=linux
-
 # 复制go.mod和go.sum文件
 COPY go.mod go.sum ./
-
 # 下载依赖
 RUN go mod download
 
 # 复制源代码
 COPY . .
 
-# 查看编译环境
-RUN go env
+# 编译应用
+RUN go build -o amazon-crawler .
 
-# 编译应用(使用更安全的编译标志)
-RUN go build -v -o amazon-crawler . || (go build -v -x -o amazon-crawler . 2>&1 | tee build_error.log && exit 1)
-
-# 使用alpine作为基础镜像，减小镜像大小
-FROM alpine:latest
+FROM debian:bullseye-slim
 
 WORKDIR /app
 
 # 安装运行时依赖
-RUN apk add --no-cache ca-certificates tzdata sqlite && \
+RUN apt-get update && apt-get install -y ca-certificates tzdata sqlite3 && \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
-    echo "Asia/Shanghai" > /etc/timezone
+    echo "Asia/Shanghai" > /etc/timezone && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # 复制编译好的应用
 COPY --from=builder /app/amazon-crawler /app/
