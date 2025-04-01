@@ -2,22 +2,28 @@ FROM golang:1.19 AS builder
 
 WORKDIR /app
 
-# 确保所有依赖已安装
-RUN apt-get update && apt-get install -y sqlite3 libsqlite3-dev gcc
+# 安装必要的编译依赖
+RUN apt-get update && apt-get install -y sqlite3 libsqlite3-dev gcc pkg-config
+
+# 显示环境变量
+RUN env
+
+# 设置CGO环境
+ENV CGO_ENABLED=1 
+ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig
 
 # 复制所有文件
 COPY . .
 
-# 列出错误模块
+# 准备依赖
 RUN go mod tidy
+RUN go mod download -x
 
-# 禁用CGO的编译尝试
-ENV CGO_ENABLED=0
-RUN go build -tags nocgo -o amazon-crawler-nocgo .
+# 尝试单独编译sqlite驱动测试CGO
+RUN go build -v -x github.com/mattn/go-sqlite3 
 
-# 如果没有CGO不工作，我们尝试启用CGO编译
-ENV CGO_ENABLED=1
-RUN go build -o amazon-crawler .
+# 编译应用（添加详细输出）
+RUN go build -v -o amazon-crawler . || (go build -v -x -o amazon-crawler . 2>&1 && exit 1)
 
 FROM debian:bullseye-slim
 
@@ -30,8 +36,8 @@ RUN apt-get update && apt-get install -y ca-certificates tzdata sqlite3 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 尝试复制正确的编译结果
-COPY --from=builder /app/amazon-crawler* /app/amazon-crawler
+# 复制编译好的应用
+COPY --from=builder /app/amazon-crawler /app/
 COPY --from=builder /app/config.yaml.save /app/config.yaml
 COPY --from=builder /app/templates /app/templates
 COPY --from=builder /app/static /app/static
