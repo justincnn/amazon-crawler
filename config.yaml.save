@@ -21,10 +21,13 @@ basic:
   domain: "www.amazon.com"
   
   # SQLite数据库文件路径
-  db_path: "amazon.db"
+  db_path: "data/amazon.db"
   
   # Web服务器端口
-  server_port: "8080"
+  server_port: "8899"
+  
+  # 日志文件保存路径
+  log_path: "logs"
   
 proxy:
   # 设置是否启动代理
@@ -33,7 +36,7 @@ proxy:
     # 每次请求时随机使用其中一个
     # 启动socks代理，可以尝试安装gost
     # gost -L :8080 或 gost -L -L 127.0.0.1:8080
-    - 127.0.0.1:8080
+    - 127.0.0.1:7890
 
 exec:
   # 循环次数
