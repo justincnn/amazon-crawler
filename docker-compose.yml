@@ -9,9 +9,10 @@ services:
     container_name: amazon-crawler
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8899:8899"
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs
     environment:
       - TZ=Asia/Shanghai
     command: ["./amazon-crawler", "-c", "config.yaml"] 
