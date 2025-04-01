@@ -3,7 +3,7 @@ FROM golang:1.19-alpine AS builder
 WORKDIR /app
 
 # 安装编译依赖
-RUN apk add --no-cache gcc musl-dev
+RUN apk add --no-cache gcc musl-dev git
 
 # 复制go.mod和go.sum文件
 COPY go.mod go.sum ./
@@ -14,8 +14,8 @@ RUN go mod download
 # 复制源代码
 COPY . .
 
-# 编译应用
-RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o amazon-crawler .
+# 编译应用(修改编译方式)
+RUN go build -o amazon-crawler .
 
 # 使用alpine作为基础镜像，减小镜像大小
 FROM alpine:latest
@@ -23,7 +23,7 @@ FROM alpine:latest
 WORKDIR /app
 
 # 安装运行时依赖
-RUN apk add --no-cache ca-certificates tzdata && \
+RUN apk add --no-cache ca-certificates tzdata sqlite && \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone
 
@@ -40,7 +40,7 @@ RUN mkdir -p /app/data
 ENV GIN_MODE=release
 
 # 暴露Web端口
-EXPOSE 8080
+EXPOSE 8899
 
 # 设置数据卷
 VOLUME ["/app/data"]
