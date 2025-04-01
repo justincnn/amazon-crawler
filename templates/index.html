@@ -30,6 +30,9 @@
                             <a class="nav-link" data-bs-target="sellers-section">商家信息</a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link" data-bs-target="logs-section">运行日志</a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link" data-bs-target="settings-section">设置</a>
                         </li>
                     </ul>
@@ -62,6 +65,22 @@
                                     </div>
                                 </div>
                                 <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="allLoopCount" class="form-label">总循环次数 (0=无限)</label>
+                                        <input type="number" class="form-control" id="allLoopCount" min="0" value="0">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="searchLoopCount" class="form-label">搜索循环次数 (0=无限)</label>
+                                        <input type="number" class="form-control" id="searchLoopCount" min="0" value="0">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="productLoopCount" class="form-label">产品循环次数 (0=无限)</label>
+                                        <input type="number" class="form-control" id="productLoopCount" min="0" value="0">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="sellerLoopCount" class="form-label">商家循环次数 (0=无限)</label>
+                                        <input type="number" class="form-control" id="sellerLoopCount" min="0" value="0">
+                                    </div>
                                     <button id="startCrawlerBtn" class="btn btn-success">启动爬虫</button>
                                 </div>
                             </div>
@@ -187,7 +206,7 @@
                                 </div>
                                 <div class="col-md-6">
                                     <div class="input-group">
-                                        <input type="text" class="form-control" id="trnSearch" placeholder="按税号搜索">
+                                        <input type="text" class="form-control" id="trnSearch" placeholder="按名称、地址或税号搜索">
                                         <button class="btn btn-outline-secondary" type="button" id="searchTrnBtn">搜索</button>
                                     </div>
                                 </div>
@@ -221,6 +240,33 @@
             </div>
         </div>
 
+        <!-- 运行日志 -->
+        <div id="logs-section" class="content-section">
+            <div class="row mt-4">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between">
+                            <h5>爬虫运行日志</h5>
+                            <div>
+                                <button class="btn btn-outline-secondary btn-sm" id="refreshLogBtn">刷新日志</button>
+                                <select class="form-select form-select-sm d-inline-block w-auto ms-2" id="logLevelSelect">
+                                    <option value="all">全部日志</option>
+                                    <option value="info">信息</option>
+                                    <option value="warn">警告</option>
+                                    <option value="error">错误</option>
+                                </select>
+                                <input type="number" class="form-control form-control-sm d-inline-block w-auto ms-2" id="logLines" value="100" min="10" max="1000" step="10">
+                                <label for="logLines" class="ms-1">行</label>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <pre id="logContent" class="log-container bg-dark text-light p-3 rounded" style="max-height: 500px; overflow-y: auto; font-size: 0.85rem;">加载中...</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- 设置 -->
         <div id="settings-section" class="content-section">
             <div class="row mt-4">
@@ -234,13 +280,13 @@
                                 <div class="mb-3 row">
                                     <label class="col-sm-2 col-form-label">程序标识 (app_id)</label>
                                     <div class="col-sm-10">
-                                        <input type="number" class="form-control" id="appId" min="1">
+                                        <input type="number" class="form-control" id="appId" min="1" value="1">
                                     </div>
                                 </div>
                                 <div class="mb-3 row">
                                     <label class="col-sm-2 col-form-label">主机标识 (host_id)</label>
                                     <div class="col-sm-10">
-                                        <input type="number" class="form-control" id="hostId" min="1">
+                                        <input type="number" class="form-control" id="hostId" min="1" value="1">
                                     </div>
                                 </div>
                                 <div class="mb-3 row">
@@ -275,6 +321,7 @@
                                 <div class="mb-3">
                                     <label class="form-label">Cookie</label>
                                     <textarea class="form-control" id="cookieText" rows="3" placeholder="session-id=xxxx; session-id-time=2082787201l;..."></textarea>
+                                    <small class="text-muted">提示：直接从浏览器访问亚马逊网站，F12开发者工具中复制Cookie</small>
                                 </div>
                                 <button type="submit" class="btn btn-primary">保存Cookie</button>
                             </form>

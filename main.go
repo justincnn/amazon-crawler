@@ -5,13 +5,19 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/mattn/go-sqlite3"
 	log "github.com/tengfei-xy/go-log"
@@ -31,6 +37,8 @@ type appConfig struct {
 	db         *sql.DB
 	cookie     string
 	primary_id int64
+	logFile    *os.File
+	logMutex   sync.Mutex
 }
 type Exec struct {
 	Enable          `yaml:"enable"`
@@ -59,6 +67,7 @@ type Basic struct {
 	Domain     string `yaml:"domain"`
 	DbPath     string `yaml:"db_path"`
 	ServerPort string `yaml:"server_port"`
+	LogPath    string `yaml:"log_path"`
 }
 type Proxy struct {
 	Enable bool `yaml:"enable"`
@@ -74,6 +83,34 @@ var robot Robots
 var templates *template.Template
 
 const userAgent = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36`
+
+// 初始化日志文件
+func initLogFile() error {
+	// 设置默认日志路径
+	if app.Basic.LogPath == "" {
+		app.Basic.LogPath = "logs"
+	}
+	
+	// 确保日志目录存在
+	if err := os.MkdirAll(app.Basic.LogPath, 0755); err != nil {
+		return err
+	}
+	
+	// 创建按日期命名的日志文件
+	logFileName := filepath.Join(app.Basic.LogPath, time.Now().Format("2006-01-02")+".log")
+	file, err := os.OpenFile(logFileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	
+	// 设置日志输出同时到文件和控制台
+	log.SetOutput(io.MultiWriter(os.Stdout, file))
+	
+	// 保存文件句柄以便后续使用
+	app.logFile = file
+	
+	return nil
+}
 
 func init_config(flag flagStruct) {
 	log.Infof("读取配置文件:%s", flag.config_file)
@@ -114,6 +151,11 @@ func init_config(flag flagStruct) {
 	app.Exec.seller_time = 0
 
 	log.Infof("程序标识:%d 主机标识:%d", app.Basic.App_id, app.Basic.Host_id)
+	
+	// 初始化日志文件
+	if err := initLogFile(); err != nil {
+		log.Errorf("初始化日志文件失败: %v", err)
+	}
 }
 
 func init_rebots() {
@@ -253,6 +295,9 @@ func init_signal() {
 		log.Infof("程序即将结束")
 		app.end()
 		app.db.Close()
+		if app.logFile != nil {
+			app.logFile.Close()
+		}
 		log.Infof("程序结束")
 		os.Exit(0)
 	}()
@@ -266,7 +311,20 @@ func init_flag() flagStruct {
 }
 
 func setupRouter() *gin.Engine {
+	// 设置gin为release模式
+	if os.Getenv("GIN_MODE") == "release" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+	
 	r := gin.Default()
+	
+	// 设置CORS
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type"},
+		AllowCredentials: true,
+	}))
 	
 	// 加载静态文件
 	r.Static("/static", "./static")
@@ -304,6 +362,9 @@ func setupRouter() *gin.Engine {
 		// 获取cookie
 		api.GET("/cookie", getCookie)
 		api.POST("/cookie", updateCookie)
+		
+		// 获取日志
+		api.GET("/logs", getLogs)
 	}
 	
 	return r
@@ -405,6 +466,12 @@ func addKeyword(c *gin.Context) {
 		return
 	}
 	
+	// 验证输入
+	if keyword.ZhKey == "" || keyword.EnKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "中文关键词和英文关键词都不能为空"})
+		return
+	}
+	
 	res, err := app.db.Exec("INSERT INTO category (zh_key, en_key, priority) VALUES (?, ?, ?)",
 		keyword.ZhKey, keyword.EnKey, keyword.Priority)
 	if err != nil {
@@ -413,7 +480,7 @@ func addKeyword(c *gin.Context) {
 	}
 	
 	id, _ := res.LastInsertId()
-	c.JSON(http.StatusOK, gin.H{"id": id})
+	c.JSON(http.StatusOK, gin.H{"id": id, "status": "success"})
 }
 
 func deleteKeyword(c *gin.Context) {
@@ -429,9 +496,13 @@ func deleteKeyword(c *gin.Context) {
 
 func startCrawler(c *gin.Context) {
 	var config struct {
-		Search  bool `json:"search"`
-		Product bool `json:"product"`
-		Seller  bool `json:"seller"`
+		Search      bool `json:"search"`
+		Product     bool `json:"product"`
+		Seller      bool `json:"seller"`
+		LoopAll     int  `json:"loop_all"`
+		LoopSearch  int  `json:"loop_search"`
+		LoopProduct int  `json:"loop_product"`
+		LoopSeller  int  `json:"loop_seller"`
 	}
 	
 	if err := c.BindJSON(&config); err != nil {
@@ -442,6 +513,20 @@ func startCrawler(c *gin.Context) {
 	app.Exec.Enable.Search = config.Search
 	app.Exec.Enable.Product = config.Product
 	app.Exec.Enable.Seller = config.Seller
+	
+	// 设置循环次数
+	if config.LoopAll >= 0 {
+		app.Exec.Loop.All = config.LoopAll
+	}
+	if config.LoopSearch >= 0 {
+		app.Exec.Loop.Search = config.LoopSearch
+	}
+	if config.LoopProduct >= 0 {
+		app.Exec.Loop.Product = config.LoopProduct
+	}
+	if config.LoopSeller >= 0 {
+		app.Exec.Loop.Seller = config.LoopSeller
+	}
 	
 	c.JSON(http.StatusOK, gin.H{"status": "started"})
 }
@@ -490,24 +575,25 @@ func getResults(c *gin.Context) {
 func getSellers(c *gin.Context) {
 	limit := c.DefaultQuery("limit", "100")
 	offset := c.DefaultQuery("offset", "0")
-	trn := c.DefaultQuery("trn", "")
+	query := c.DefaultQuery("query", "")
 	
-	query := `
+	sqlQuery := `
 		SELECT id, seller_id, status, name, address, trn, info_flag, trn_flag
 		FROM seller
 		WHERE 1=1
 	`
 	var args []interface{}
 	
-	if trn != "" {
-		query += " AND trn LIKE ?"
-		args = append(args, "%"+trn+"%")
+	if query != "" {
+		sqlQuery += " AND (seller_id LIKE ? OR name LIKE ? OR address LIKE ? OR trn LIKE ?)"
+		queryParam := "%" + query + "%"
+		args = append(args, queryParam, queryParam, queryParam, queryParam)
 	}
 	
-	query += " ORDER BY id DESC LIMIT ? OFFSET ?"
+	sqlQuery += " ORDER BY id DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 	
-	rows, err := app.db.Query(query, args...)
+	rows, err := app.db.Query(sqlQuery, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -551,6 +637,10 @@ func getConfig(c *gin.Context) {
 		"search_priority":  app.Exec.Search_priority,
 		"proxy_enabled":    app.Proxy.Enable,
 		"proxy_socks5":     app.Proxy.Sockc5,
+		"loop_all":         app.Exec.Loop.All,
+		"loop_search":      app.Exec.Loop.Search,
+		"loop_product":     app.Exec.Loop.Product,
+		"loop_seller":      app.Exec.Loop.Seller,
 	}
 	
 	c.JSON(http.StatusOK, config)
@@ -628,6 +718,101 @@ func updateCookie(c *gin.Context) {
 	
 	app.cookie = cookieData.Cookie
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+// 获取日志
+func getLogs(c *gin.Context) {
+	level := c.DefaultQuery("level", "all")
+	linesStr := c.DefaultQuery("lines", "100")
+	
+	lines, err := strconv.Atoi(linesStr)
+	if err != nil || lines <= 0 {
+		lines = 100
+	}
+	if lines > 1000 {
+		lines = 1000
+	}
+	
+	// 确定日志文件路径
+	logFileName := filepath.Join(app.Basic.LogPath, time.Now().Format("2006-01-02")+".log")
+	
+	app.logMutex.Lock()
+	defer app.logMutex.Unlock()
+	
+	// 读取日志文件
+	logData, err := os.ReadFile(logFileName)
+	if err != nil {
+		// 如果今天的日志文件不存在，尝试找最近的日志文件
+		files, err := os.ReadDir(app.Basic.LogPath)
+		if err != nil || len(files) == 0 {
+			c.JSON(http.StatusOK, gin.H{"logs": []string{}})
+			return
+		}
+		
+		// 按名称排序（日期格式排序）
+		var logFiles []string
+		for _, file := range files {
+			if !file.IsDir() && strings.HasSuffix(file.Name(), ".log") {
+				logFiles = append(logFiles, file.Name())
+			}
+		}
+		
+		if len(logFiles) == 0 {
+			c.JSON(http.StatusOK, gin.H{"logs": []string{}})
+			return
+		}
+		
+		// 读取最新的日志文件
+		logFileName = filepath.Join(app.Basic.LogPath, logFiles[len(logFiles)-1])
+		logData, err = os.ReadFile(logFileName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取日志文件"})
+			return
+		}
+	}
+	
+	// 按行分割
+	allLines := strings.Split(string(logData), "\n")
+	
+	// 根据日志级别过滤
+	var filteredLines []string
+	switch level {
+	case "info":
+		filteredLines = filterLogsByPattern(allLines, "\\[INFO\\]")
+	case "warn":
+		filteredLines = filterLogsByPattern(allLines, "\\[WARN\\]")
+	case "error":
+		filteredLines = filterLogsByPattern(allLines, "\\[ERROR\\]")
+	default:
+		filteredLines = allLines
+	}
+	
+	// 取最后n行
+	resultLines := getLastNLines(filteredLines, lines)
+	
+	c.JSON(http.StatusOK, gin.H{"logs": resultLines})
+}
+
+// 按正则表达式过滤日志行
+func filterLogsByPattern(lines []string, pattern string) []string {
+	re := regexp.MustCompile(pattern)
+	var filtered []string
+	
+	for _, line := range lines {
+		if re.MatchString(line) {
+			filtered = append(filtered, line)
+		}
+	}
+	
+	return filtered
+}
+
+// 获取最后n行
+func getLastNLines(lines []string, n int) []string {
+	if len(lines) <= n {
+		return lines
+	}
+	return lines[len(lines)-n:]
 }
 
 func (app *appConfig) get_cookie() (string, error) {

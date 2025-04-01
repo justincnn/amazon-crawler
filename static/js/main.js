@@ -14,6 +14,11 @@ document.addEventListener('DOMContentLoaded', function() {
             // 显示对应的content-section
             const targetId = this.getAttribute('data-bs-target');
             document.getElementById(targetId).classList.add('active');
+            
+            // 如果切换到日志页面，自动加载日志
+            if (targetId === 'logs-section') {
+                loadLogs();
+            }
         });
     });
 
@@ -47,6 +52,15 @@ document.addEventListener('DOMContentLoaded', function() {
         e.preventDefault();
         saveCookie();
     });
+    
+    // 日志刷新按钮点击事件
+    document.getElementById('refreshLogBtn').addEventListener('click', loadLogs);
+    
+    // 日志筛选事件
+    document.getElementById('logLevelSelect').addEventListener('change', loadLogs);
+    
+    // 日志行数变更事件
+    document.getElementById('logLines').addEventListener('change', loadLogs);
 
     // 定期更新状态
     setInterval(loadStatus, 5000);
@@ -72,7 +86,11 @@ function startCrawler() {
     const config = {
         search: document.getElementById('searchToggle').checked,
         product: document.getElementById('productToggle').checked,
-        seller: document.getElementById('sellerToggle').checked
+        seller: document.getElementById('sellerToggle').checked,
+        loop_all: parseInt(document.getElementById('allLoopCount').value) || 0,
+        loop_search: parseInt(document.getElementById('searchLoopCount').value) || 0,
+        loop_product: parseInt(document.getElementById('productLoopCount').value) || 0,
+        loop_seller: parseInt(document.getElementById('sellerLoopCount').value) || 0
     };
 
     fetch('/api/crawler/start', {
@@ -125,10 +143,16 @@ function loadKeywords() {
 // 保存关键词
 function saveKeyword() {
     const keyword = {
-        zh_key: document.getElementById('zhKey').value,
-        en_key: document.getElementById('enKey').value,
+        zh_key: document.getElementById('zhKey').value.trim(),
+        en_key: document.getElementById('enKey').value.trim(),
         priority: parseInt(document.getElementById('priority').value)
     };
+
+    // 验证输入
+    if (!keyword.zh_key || !keyword.en_key) {
+        alert('中文关键词和英文关键词都不能为空！');
+        return;
+    }
 
     fetch('/api/keywords', {
         method: 'POST',
@@ -137,7 +161,12 @@ function saveKeyword() {
         },
         body: JSON.stringify(keyword)
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('保存关键词失败，请重试！');
+        }
+        return response.json();
+    })
     .then(data => {
         // 关闭模态框
         const modal = bootstrap.Modal.getInstance(document.getElementById('keywordModal'));
@@ -150,8 +179,14 @@ function saveKeyword() {
         
         // 重新加载关键词列表
         loadKeywords();
+        
+        // 显示成功消息
+        alert('关键词保存成功！');
     })
-    .catch(error => console.error('Error:', error));
+    .catch(error => {
+        console.error('Error:', error);
+        alert(error.message);
+    });
 }
 
 // 删除关键词
@@ -196,12 +231,12 @@ function loadProducts(page, limit = 100) {
 }
 
 // 加载商家信息
-function loadSellers(page, trn = '', limit = 100) {
+function loadSellers(page, query = '', limit = 100) {
     const offset = page * limit;
     let url = `/api/sellers?limit=${limit}&offset=${offset}`;
     
-    if (trn) {
-        url += `&trn=${encodeURIComponent(trn)}`;
+    if (query) {
+        url += `&query=${encodeURIComponent(query)}`;
     }
     
     fetch(url)
@@ -224,10 +259,57 @@ function loadSellers(page, trn = '', limit = 100) {
 
             // 更新分页
             updatePagination('sellersPagination', page, Math.ceil(data.length / limit), function(p) {
-                loadSellers(p, trn, limit);
+                loadSellers(p, query, limit);
             });
         })
         .catch(error => console.error('Error:', error));
+}
+
+// 加载日志
+function loadLogs() {
+    const logLevel = document.getElementById('logLevelSelect').value;
+    const lines = document.getElementById('logLines').value;
+    
+    fetch(`/api/logs?level=${logLevel}&lines=${lines}`)
+        .then(response => response.json())
+        .then(data => {
+            const logContent = document.getElementById('logContent');
+            
+            if (data.logs && data.logs.length > 0) {
+                // 格式化日志并高亮不同级别
+                const formattedLogs = data.logs.map(log => {
+                    let levelClass = '';
+                    if (log.includes('[INFO]')) {
+                        levelClass = 'log-info';
+                    } else if (log.includes('[WARN]')) {
+                        levelClass = 'log-warn';
+                    } else if (log.includes('[ERROR]')) {
+                        levelClass = 'log-error';
+                    }
+                    
+                    // 尝试提取并格式化时间戳
+                    const timeMatch = log.match(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/);
+                    if (timeMatch) {
+                        const timestamp = timeMatch[0];
+                        const restOfLog = log.substring(timestamp.length);
+                        return `<span class="log-time">${timestamp}</span><span class="${levelClass}">${restOfLog}</span>`;
+                    }
+                    
+                    return `<span class="${levelClass}">${log}</span>`;
+                }).join('\n');
+                
+                logContent.innerHTML = formattedLogs;
+            } else {
+                logContent.innerHTML = '暂无日志数据';
+            }
+            
+            // 滚动到底部
+            logContent.scrollTop = logContent.scrollHeight;
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('logContent').innerHTML = '加载日志失败: ' + error.message;
+        });
 }
 
 // 加载配置
@@ -239,6 +321,12 @@ function loadConfig() {
             document.getElementById('hostId').value = data.host_id;
             document.getElementById('domain').value = data.domain;
             document.getElementById('searchPriority').value = data.search_priority;
+            
+            // 加载循环次数设置
+            if (data.loop_all !== undefined) document.getElementById('allLoopCount').value = data.loop_all;
+            if (data.loop_search !== undefined) document.getElementById('searchLoopCount').value = data.loop_search;
+            if (data.loop_product !== undefined) document.getElementById('productLoopCount').value = data.loop_product;
+            if (data.loop_seller !== undefined) document.getElementById('sellerLoopCount').value = data.loop_seller;
         })
         .catch(error => console.error('Error:', error));
 }
