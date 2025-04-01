@@ -11,8 +11,8 @@ import (
 	log "github.com/tengfei-xy/go-log"
 )
 
-const MYSQL_SEARCH_STATUS_START int64 = 0
-const MYSQL_SEARCH_STATUS_OVER int64 = 1
+const SQLITE_SEARCH_STATUS_START int64 = 0
+const SQLITE_SEARCH_STATUS_OVER int64 = 1
 
 type searchStruct struct {
 	zh_key        string
@@ -47,7 +47,7 @@ func (s *searchStruct) main() error {
 	}
 	app.Exec.Loop.search_time++
 
-	app.update(MYSQL_APPLICATION_STATUS_SEARCH)
+	app.update(SQLITE_APPLICATION_STATUS_SEARCH)
 
 	row, err := s.get_category()
 	if err != nil {
@@ -96,16 +96,16 @@ func (s *searchStruct) get_category() (*sql.Rows, error) {
 	switch app.Exec.Search_priority {
 	case 1:
 		log.Infof("搜索优先级优先")
-		return app.db.Query(`select id,zh_key,en_key from category order by priority DESC`)
+		return app.db.Query(`SELECT id, zh_key, en_key FROM category ORDER BY priority DESC`)
 	case 2:
 		log.Infof("搜索次数少优先")
-		return app.db.Query(`SELECT c.id, c.zh_key, c.en_key  FROM category c LEFT JOIN search_statistics s ON s.category_id = c.id GROUP BY c.id ORDER BY COUNT(s.category_id),id`)
+		return app.db.Query(`SELECT c.id, c.zh_key, c.en_key FROM category c LEFT JOIN search_statistics s ON s.category_id = c.id GROUP BY c.id ORDER BY COUNT(s.category_id), id`)
 	}
 	log.Infof("错误的输入，按搜索优先级优先")
-	return app.db.Query(`select id,zh_key,en_key from category order by priority DESC `)
+	return app.db.Query(`SELECT id, zh_key, en_key FROM category ORDER BY priority DESC`)
 }
 func (s *searchStruct) search_start() (int64, error) {
-	r, err := app.db.Exec("insert into search_statistics(category_id,app) values(?,?)", s.category_id, app.Basic.App_id)
+	r, err := app.db.Exec("INSERT INTO search_statistics(category_id, app) VALUES(?, ?)", s.category_id, app.Basic.App_id)
 	if err != nil {
 		return 0, err
 	}
@@ -114,11 +114,11 @@ func (s *searchStruct) search_start() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	log.Infof("开始搜索 关键词:%s 关键词ID:%d 状态:%d(开始)", s.zh_key, s.category_id, MYSQL_SEARCH_STATUS_START)
+	log.Infof("开始搜索 关键词:%s 关键词ID:%d 状态:%d(开始)", s.zh_key, s.category_id, SQLITE_SEARCH_STATUS_START)
 	return id, nil
 }
 func (s *searchStruct) search_end(insert_id int64) error {
-	_, err := app.db.Exec("update search_statistics set status=?,end=CURRENT_TIMESTAMP,valid=? where id=?", MYSQL_SEARCH_STATUS_OVER, s.valid, insert_id)
+	_, err := app.db.Exec("UPDATE search_statistics SET status=?, end=CURRENT_TIMESTAMP, valid=? WHERE id=?", SQLITE_SEARCH_STATUS_OVER, s.valid, insert_id)
 	if err != nil {
 		return err
 	}
@@ -199,75 +199,46 @@ func (s *searchStruct) get_product_url(doc *goquery.Document) {
 		}
 	}()
 
-	res := doc.Find("div[class~=s-search-results]").First()
-
-	if res.Length() == 0 {
-		log.Errorf("错误的页面结构 关键词:%s", s.zh_key)
-		return
-	}
-	// len res.Find("div[data-index]")
-	data_index := res.Find("div[data-index]")
-	if data_index.Length() == 0 {
-		log.Errorf("没有找到商品项 关键词:%s", s.zh_key)
-		return
-	}
-	log.Infof("找到商品项数:%d 关键词:%s", data_index.Length(), s.zh_key)
-
-	data_index.Each(func(i int, g *goquery.Selection) {
-
-		link, exist := g.Find("a").First().Attr("href")
-
-		if exist {
-			link, _ = url.QueryUnescape(link)
-
-			// log.Infof("找到商品项中的链接 关键词:%s 页面商品序号:%d 商品原始链接: %s ", s.zh_key, i, link)
-
-			if err := robot.IsAllow(userAgent, link); err != nil {
-				log.Errorf("此链接不允许访问 关键词:%s %v", s.zh_key, err)
-				return
-			}
-
-			if strings.HasPrefix(link, "/gp/") || strings.Contains(link, `javascript:void(0)`) {
-				link = fmt.Sprintf("https://%s%s", app.Domain, link)
-				log.Warnf("非预设的链接跳过此链接 关键词:%s 捕获链接:%s", s.zh_key, link)
-			} else if strings.HasPrefix(link, "https://aax-") {
-				log.Warnf("非预设的链接跳过此链接 关键词:%s 捕获链接:%s", s.zh_key, link)
-				return
-			}
-			if strings.Contains(link, `/dp/`) {
-				link = "/dp/" + strings.Split(link, "/dp/")[1]
-			}
-			// log.Infof("找到商品项中的链接 关键词:%s 处理后的商品链接:%s", s.zh_key, fmt.Sprintf("https://%s%s", app.Domain, link))
-			s.deal_prouct_url(link)
-
-		} else {
-			if i != 0 {
-				log.Warnf("此商品项中未找到链接 关键词:%s 序号:%d", s.zh_key, i)
-			}
+	// 获取多个div标签
+	doc.Find("#search div.s-result-item.s-asin").Each(func(i int, selection *goquery.Selection) {
+		defer func() {
+			recover()
+		}()
+		product_div_id, ok := selection.Attr("data-asin")
+		if !ok {
+			return
 		}
 
+		// 获取当前div下的a标签(a-link-normal)
+		a_href, ok := selection.Find("a.a-link-normal.s-no-outline").First().Attr("href")
+		if !ok {
+			return
+		}
+		a_href_decode, err := url.QueryUnescape(a_href)
+		if err != nil {
+			log.Errorf("URL解码错误:%v", err)
+			return
+		}
+		s.product_url = fmt.Sprintf("https://%s%s", app.Domain, a_href_decode)
+		s.product_param = product_div_id
+		log.Infof("发现一个商品链接:%s, 检查是否重复", s.product_url)
+		s.insert_product()
 	})
 }
-func (s *searchStruct) deal_prouct_url(link string) {
-	if !strings.Contains(link, "/ref=") || strings.HasPrefix(link, "https://") {
-		log.Errorf("非预设的链接跳过此链接:%s", link)
-		return
-	}
-	url := strings.Split(link, "/ref=")
 
-	// log.Infof("找到商品 关键词:%s 链接:%s 商品ID的url:%s 商品参数的url:%s ", s.zh_key, link, url[0], product_param)
-	_, err := app.db.Exec(`INSERT INTO product(url,param) values(?,?)`, url[0], "/ref="+url[1])
-
-	link = fmt.Sprintf("https://%s%s", app.Domain, link)
-	if is_duplicate_entry(err) {
-		log.Infof("商品已存在 关键词:%s 链接:%s ", s.zh_key, link)
-		return
-	}
-	if err != nil {
-		log.Errorf("商品插入失败 关键词:%s 链接:%s %v ", s.zh_key, link, err)
+func (s *searchStruct) insert_product() {
+	var skip int
+	err := app.db.QueryRow("SELECT 1 FROM product WHERE url = ?", s.product_url).Scan(&skip)
+	if err == nil {
+		log.Warn("跳过，记录已存在")
 		return
 	}
 
-	log.Infof("商品插入成功 关键词:%s 链接:%s ", s.zh_key, link)
-	s.valid += 1
+	_, err = app.db.Exec("INSERT INTO product(url, param, app) VALUES(?, ?, ?)", s.product_url, s.product_param, app.Basic.App_id)
+	if err == nil {
+		s.valid++
+		log.Infof("插入成功 有效数:%d", s.valid)
+	} else {
+		log.Errorf("插入失败 url:%s %v", s.product_url, err)
+	}
 }

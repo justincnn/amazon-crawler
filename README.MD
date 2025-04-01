@@ -1,6 +1,6 @@
 # amazon-crawler
 
-一种在亚马逊平台，根据关键词支持多主机搜索商家信息（名称、地址、税号）的工具，适用多种主流操作系统
+一种在亚马逊平台，根据关键词支持多主机搜索商家信息（名称、地址、税号）的工具，适用多种主流操作系统。带有Web界面，可直接通过浏览器进行操作。
 
 **问题反馈**： 联系方式位于[个人首页](https://github.com/tengfei-xy)
 
@@ -12,116 +12,109 @@
 
 本项目是通过关键词在亚马逊进行搜索的，并将搜索结果保留到数据库中并提取每个商品的卖家的信息，最后从卖家信息中提取TRN。由于每个步骤相互独立，因此适合分布式运行。
 
-# 三、初始化说明
+## 新功能
 
-[下载](https://github.com/tengfei-xy/amazon-crawler/releases)
+- Web界面：添加了Web前端界面，可以直接通过浏览器操作爬虫
+- SQLite数据库：使用SQLite替代MySQL，降低部署复杂度
+- 关键词管理：通过Web界面添加和管理关键词
+- 爬虫结果显示：在Web界面上直接查看和筛选爬虫结果
+- Docker部署：支持通过Docker快速部署
 
-## 数据库
+# 三、使用说明
 
-> 仅支持mysql
+## 方法一：二进制运行
 
-导入[SQL文件](https://github.com/tengfei-xy/amazon-crawler/blob/main/sql/ddl.sql)并初始化数据库参考命令：
+1. [下载](https://github.com/tengfei-xy/amazon-crawler/releases)最新版本
 
-```bash
-# 执行后，将丢弃原表的数据
-bin/mysql -u root -p < ddl.sql
-```
+2. 创建并修改配置文件
 
-由于工具需要关键词来进行搜索，所以需要初始化一些关键词，参考[关键词数据库文件]((https://github.com/tengfei-xy/amazon-crawler/blob/main/sql/category.sql))
+   ```bash
+   cp config.yaml.save config.yaml
+   vim config.yaml  # 修改配置
+   ```
 
-导入命令
+3. 启动程序
 
-```bash
-# 此语句应建表后立即使用
-bin/mysql -D amazon -u root -p < category.sql
-# 若只添加测试使用单条命令，使用下列语句,并设置最低的优先级为0
-# insert into `category` (`zh_key`,`en_key`,priority) VALUES ('音响','speakers',0);
-```
+   ```bash
+   ./amazon-crawler -c config.yaml
+   ```
 
-创建amazone用户
+4. 打开浏览器，访问 http://localhost:8080 (或配置的其他端口)
 
-```sql
-# mysql 5.7.x
-GRANT ALL PRIVILEGES ON amazon.* to 'amazon'@'%'  identified by 'password';
-flush privileges;
+## 方法二：Docker部署
 
-# mysql 8.x
-create user 'amazon'@'%' identified by 'password';
-GRANT ALL PRIVILEGES ON amazon.* TO 'amazon'@'%' WITH GRANT OPTION;
-flush privileges;
-```
+1. 克隆仓库
 
+   ```bash
+   git clone https://github.com/tengfei-xy/amazon-crawler.git
+   cd amazon-crawler
+   ```
 
+2. 使用Docker Compose构建并启动
 
-## 配置文件
+   ```bash
+   docker-compose up -d
+   ```
 
-复制config.yaml.save为config.yaml
+3. 打开浏览器，访问 http://localhost:8080
 
-配置文件具体含义参考[文件中的注释](https://github.com/tengfei-xy/amazon-crawler/blob/main/config.yaml.save)
+# 四、Web界面使用
 
-## cookie
+## 控制面板
 
-你应该为每个配置文件中的host_id填充cookie，填充位置是数据库的cookie表，分别包含host_id和对应的cookie，
+控制面板用于控制爬虫的启动和监控爬虫状态：
 
-cookie格式如下
+- 启用/禁用各种爬虫功能
+- 查看爬虫运行统计信息
+- 启动爬虫
 
-```
-session-id=xxxx; session-id-time=2082787201l; i18n-prefs=GBP; sp-cdn="L5Z9:JP"; ubid-acbuk=xxx; session-token="xxxx"; csm-hit=xxx
-```
+## 关键词管理
 
-> Cookie 解析
->
-> sp-cdn：页面中选择的配送地区
->
-> lc-main：页面中选择的语言
+在关键词管理页面可以：
 
-注：亚马逊的cokie，半小时左右后会失效，但也会传回有效cookie，接着用就行。替换三次左右，cookie就变成天单位的有效时长了。至少有个2天。
+- 查看已有关键词列表
+- 添加新的关键词（中英文）
+- 设置关键词优先级
+- 删除不需要的关键词
 
-注：cookie在程序运行时可随时修改，每次发送http请求时都会从数据库从重新获取一次
+## 产品列表
 
-注：对于从亚马逊网页中获取cookie时，最好同意页面中提示的cookie，让cookie的存活更久
+产品列表页面显示爬虫发现的所有产品：
 
-# 四、启动
+- 查看产品URL
+- 查看产品状态
+- 查看关联的关键词
 
-```
-./amazon-crawler -c config.yaml
-```
+## 商家信息
 
+商家信息页面显示从产品中提取的商家数据：
 
+- 查看商家名称、地址
+- 查看税号信息
+- 按税号搜索筛选商家
 
-# 五、运行情况
+## 设置
 
-> 4天
+设置页面用于配置爬虫：
 
-1k多个关键词，两次搜索，共发现235334个产品
+- 设置程序标识和主机标识
+- 设置亚马逊域名
+- 配置Cookie信息
+- 设置搜索优先级规则
 
-```sql
-mysql> select count(*) as `计数` from product;
-+--------+
-| 计数   |
-+--------+
-| 235334 |
-+--------+
-1 row in set (0.06 sec)
-```
+# 五、数据库结构
 
-其中，对每个产品检查商家信息
+项目使用SQLite数据库，主要表结构如下：
 
-```sql
-mysql> SELECT * FROM amazon.产品检查表;
-+--------------+--------------+
-| 状态         | 链接数量     |
-+--------------+--------------+
-| 未搜索       |        32691 |
-| 准备检查     |          391 |
-| 检查结束     |       100891 |
-| 其他错误     |           13 |
-| 没有商家     |       101348 |
-+--------------+--------------+
-5 rows in set (0.10 sec)
-```
+- application：记录程序启动状态
+- category：存储搜索关键词
+- cookie：存储不同主机的cookie
+- product：存储搜索到的产品URL
+- search_statistics：记录搜索统计信息
+- seller：存储商家信息
 
+# 六、注意事项
 
-
-
-
+- Cookie问题：亚马逊的cookie有效期较短，需要定期更新
+- 网络环境：建议使用代理，避免IP被封
+- 爬虫频率：请合理控制爬取频率，避免对目标网站造成压力 

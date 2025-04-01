@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>亚马逊爬虫工具</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container-fluid">
+        <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="#">亚马逊爬虫</a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav">
+                        <li class="nav-item">
+                            <a class="nav-link active" data-bs-target="dashboard-section">控制面板</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-bs-target="keywords-section">关键词管理</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-bs-target="products-section">产品列表</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-bs-target="sellers-section">商家信息</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-bs-target="settings-section">设置</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 控制面板 -->
+        <div id="dashboard-section" class="content-section active">
+            <div class="row mt-4">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5>爬虫控制</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input" type="checkbox" id="searchToggle">
+                                        <label class="form-check-label" for="searchToggle">启用关键词搜索</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input" type="checkbox" id="productToggle">
+                                        <label class="form-check-label" for="productToggle">启用产品页面搜索</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input" type="checkbox" id="sellerToggle">
+                                        <label class="form-check-label" for="sellerToggle">启用商家信息搜索</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <button id="startCrawlerBtn" class="btn btn-success">启动爬虫</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row mt-4">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5>爬虫状态</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="card">
+                                        <div class="card-body text-center">
+                                            <h5>关键词搜索</h5>
+                                            <p><span id="searchTimes" class="fs-3">0</span> 次</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="card">
+                                        <div class="card-body text-center">
+                                            <h5>产品搜索</h5>
+                                            <p><span id="productTimes" class="fs-3">0</span> 次</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="card">
+                                        <div class="card-body text-center">
+                                            <h5>商家搜索</h5>
+                                            <p><span id="sellerTimes" class="fs-3">0</span> 次</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 关键词管理 -->
+        <div id="keywords-section" class="content-section">
+            <div class="row mt-4">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between">
+                            <h5>关键词列表</h5>
+                            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#keywordModal">添加关键词</button>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>中文关键词</th>
+                                            <th>英文关键词</th>
+                                            <th>优先级</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="keywordsTable">
+                                        <!-- 关键词数据将通过JS动态加载 -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 产品列表 -->
+        <div id="products-section" class="content-section">
+            <div class="row mt-4">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5>产品列表</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>产品URL</th>
+                                            <th>状态</th>
+                                            <th>关键词</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="productsTable">
+                                        <!-- 产品数据将通过JS动态加载 -->
+                                    </tbody>
+                                </table>
+                                <nav aria-label="产品分页">
+                                    <ul class="pagination" id="productsPagination">
+                                        <!-- 分页按钮 -->
+                                    </ul>
+                                </nav>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 商家信息 -->
+        <div id="sellers-section" class="content-section">
+            <div class="row mt-4">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h5>商家信息</h5>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="input-group">
+                                        <input type="text" class="form-control" id="trnSearch" placeholder="按税号搜索">
+                                        <button class="btn btn-outline-secondary" type="button" id="searchTrnBtn">搜索</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>商家ID</th>
+                                            <th>名称</th>
+                                            <th>地址</th>
+                                            <th>税号</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="sellersTable">
+                                        <!-- 商家数据将通过JS动态加载 -->
+                                    </tbody>
+                                </table>
+                                <nav aria-label="商家分页">
+                                    <ul class="pagination" id="sellersPagination">
+                                        <!-- 分页按钮 -->
+                                    </ul>
+                                </nav>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设置 -->
+        <div id="settings-section" class="content-section">
+            <div class="row mt-4">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5>基本设置</h5>
+                        </div>
+                        <div class="card-body">
+                            <form id="configForm">
+                                <div class="mb-3 row">
+                                    <label class="col-sm-2 col-form-label">程序标识 (app_id)</label>
+                                    <div class="col-sm-10">
+                                        <input type="number" class="form-control" id="appId" min="1">
+                                    </div>
+                                </div>
+                                <div class="mb-3 row">
+                                    <label class="col-sm-2 col-form-label">主机标识 (host_id)</label>
+                                    <div class="col-sm-10">
+                                        <input type="number" class="form-control" id="hostId" min="1">
+                                    </div>
+                                </div>
+                                <div class="mb-3 row">
+                                    <label class="col-sm-2 col-form-label">亚马逊域名</label>
+                                    <div class="col-sm-10">
+                                        <input type="text" class="form-control" id="domain" placeholder="www.amazon.com">
+                                    </div>
+                                </div>
+                                <div class="mb-3 row">
+                                    <label class="col-sm-2 col-form-label">搜索优先级</label>
+                                    <div class="col-sm-10">
+                                        <select class="form-control" id="searchPriority">
+                                            <option value="1">按优先级搜索</option>
+                                            <option value="2">按搜索次数少优先</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-primary">保存设置</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row mt-4">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5>Cookie设置</h5>
+                        </div>
+                        <div class="card-body">
+                            <form id="cookieForm">
+                                <div class="mb-3">
+                                    <label class="form-label">Cookie</label>
+                                    <textarea class="form-control" id="cookieText" rows="3" placeholder="session-id=xxxx; session-id-time=2082787201l;..."></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">保存Cookie</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加关键词模态框 -->
+    <div class="modal fade" id="keywordModal" tabindex="-1" aria-labelledby="keywordModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="keywordModalLabel">添加关键词</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="keywordForm">
+                        <div class="mb-3">
+                            <label for="zhKey" class="form-label">中文关键词</label>
+                            <input type="text" class="form-control" id="zhKey" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="enKey" class="form-label">英文关键词</label>
+                            <input type="text" class="form-control" id="enKey" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="priority" class="form-label">优先级</label>
+                            <input type="number" class="form-control" id="priority" value="0" min="0">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="saveKeywordBtn">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
+</html> 

@@ -1,0 +1,85 @@
+/* 全局样式 */
+body {
+    background-color: #f8f9fa;
+}
+
+/* 内容部分样式 */
+.content-section {
+    display: none;
+    padding: 0 15px;
+}
+
+.content-section.active {
+    display: block;
+}
+
+/* 导航条样式 */
+.navbar {
+    margin-bottom: 20px;
+}
+
+.nav-link {
+    cursor: pointer;
+}
+
+/* 表格样式 */
+.table {
+    font-size: 0.9rem;
+}
+
+.table th {
+    background-color: #f3f3f3;
+}
+
+/* 分页样式 */
+.pagination {
+    justify-content: center;
+    margin-top: 20px;
+}
+
+/* 模态框样式 */
+.modal-header {
+    background-color: #f8f9fa;
+}
+
+/* 卡片样式 */
+.card {
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 1rem;
+}
+
+.card-header {
+    background-color: #f8f9fa;
+    font-weight: 500;
+}
+
+/* 表单样式 */
+textarea.form-control {
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+
+/* 按钮样式 */
+.btn-success {
+    padding: 10px 30px;
+    font-weight: 500;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+} 

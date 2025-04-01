@@ -4,24 +4,27 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"html/template"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-
-	_ "github.com/go-sql-driver/mysql"
+	"time"
+	
+	"github.com/gin-gonic/gin"
+	_ "github.com/mattn/go-sqlite3"
 	log "github.com/tengfei-xy/go-log"
 	"gopkg.in/yaml.v3"
 )
 
-const MYSQL_APPLICATION_STATUS_START int = 0
-const MYSQL_APPLICATION_STATUS_OVER int = 1
-const MYSQL_APPLICATION_STATUS_SEARCH int = 2
-const MYSQL_APPLICATION_STATUS_PRODUCT int = 3
-const MYSQL_APPLICATION_STATUS_SELLER int = 4
+const SQLITE_APPLICATION_STATUS_START int = 0
+const SQLITE_APPLICATION_STATUS_OVER int = 1
+const SQLITE_APPLICATION_STATUS_SEARCH int = 2
+const SQLITE_APPLICATION_STATUS_PRODUCT int = 3
+const SQLITE_APPLICATION_STATUS_SELLER int = 4
 
 type appConfig struct {
-	Mysql      `yaml:"mysql"`
 	Basic      `yaml:"basic"`
 	Proxy      `yaml:"proxy"`
 	Exec       `yaml:"exec"`
@@ -50,29 +53,25 @@ type Loop struct {
 	seller_time  int
 }
 type Basic struct {
-	App_id  int    `yaml:"app_id"`
-	Host_id int    `yaml:"host_id"`
-	Test    bool   `yaml:"test"`
-	Domain  string `yaml:"domain"`
+	App_id     int    `yaml:"app_id"`
+	Host_id    int    `yaml:"host_id"`
+	Test       bool   `yaml:"test"`
+	Domain     string `yaml:"domain"`
+	DbPath     string `yaml:"db_path"`
+	ServerPort string `yaml:"server_port"`
 }
 type Proxy struct {
 	Enable bool `yaml:"enable"`
-
 	Sockc5 []string `yaml:"socks5"`
-}
-type Mysql struct {
-	Ip       string `yaml:"ip"`
-	Port     string `yaml:"port"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-	Database string `yaml:"database"`
 }
 type flagStruct struct {
 	config_file string
 }
 
+// 全局变量
 var app appConfig
 var robot Robots
+var templates *template.Template
 
 const userAgent = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36`
 
@@ -86,6 +85,14 @@ func init_config(flag flagStruct) {
 	err = yaml.Unmarshal(yamlFile, &app)
 	if err != nil {
 		panic(err)
+	}
+	
+	// 默认值设置
+	if app.Basic.ServerPort == "" {
+		app.Basic.ServerPort = "8080"
+	}
+	if app.Basic.DbPath == "" {
+		app.Basic.DbPath = "amazon.db"
 	}
 	if !app.Exec.Enable.Search && !app.Exec.Enable.Product && !app.Exec.Enable.Seller {
 		panic("没有启动功能，检查配置文件的enable配置的选项")
@@ -108,6 +115,7 @@ func init_config(flag flagStruct) {
 
 	log.Infof("程序标识:%d 主机标识:%d", app.Basic.App_id, app.Basic.Host_id)
 }
+
 func init_rebots() {
 	robotTxt := fmt.Sprintf("https://%s/robots.txt", app.Domain)
 
@@ -119,19 +127,109 @@ func init_rebots() {
 	}
 	robot = GetRobotFromTxt(txt)
 }
-func init_mysql() {
-	DB, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", app.Mysql.Username, app.Mysql.Password, app.Mysql.Ip, app.Mysql.Port, app.Mysql.Database))
+
+func init_sqlite() {
+	// 检查数据库文件是否存在
+	_, err := os.Stat(app.Basic.DbPath)
+	dbExists := !os.IsNotExist(err)
+	
+	// 连接数据库
+	db, err := sql.Open("sqlite3", app.Basic.DbPath)
 	if err != nil {
 		panic(err)
 	}
-	DB.SetConnMaxLifetime(100)
-	DB.SetMaxIdleConns(10)
-	if err := DB.Ping(); err != nil {
+	
+	if err := db.Ping(); err != nil {
 		panic(err)
 	}
+	
+	// 如果数据库文件不存在，创建表结构
+	if !dbExists {
+		log.Info("初始化数据库表结构")
+		if err := createDatabaseSchema(db); err != nil {
+			panic(err)
+		}
+	}
+	
 	log.Info("数据库已连接")
-	app.db = DB
+	app.db = db
 }
+
+func createDatabaseSchema(db *sql.DB) error {
+	// 创建application表
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS application (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		app_id INTEGER NOT NULL,
+		status INTEGER NOT NULL DEFAULT 0,
+		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`)
+	if err != nil {
+		return err
+	}
+	
+	// 创建category表
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS category (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		zh_key TEXT NOT NULL,
+		en_key TEXT NOT NULL,
+		priority INTEGER DEFAULT 0
+	)`)
+	if err != nil {
+		return err
+	}
+	
+	// 创建cookie表
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cookie (
+		host_id INTEGER PRIMARY KEY,
+		cookie TEXT
+	)`)
+	if err != nil {
+		return err
+	}
+	
+	// 创建product表
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS product (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		url TEXT NOT NULL UNIQUE,
+		param TEXT NOT NULL,
+		status INTEGER DEFAULT 0,
+		app INTEGER NOT NULL DEFAULT 0
+	)`)
+	if err != nil {
+		return err
+	}
+	
+	// 创建search_statistics表
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS search_statistics (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		category_id INTEGER NOT NULL,
+		start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		end TIMESTAMP,
+		status INTEGER DEFAULT 0,
+		app INTEGER NOT NULL,
+		valid INTEGER DEFAULT 0
+	)`)
+	if err != nil {
+		return err
+	}
+	
+	// 创建seller表
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS seller (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		seller_id TEXT UNIQUE,
+		status INTEGER DEFAULT 0,
+		app INTEGER NOT NULL DEFAULT 0,
+		name TEXT,
+		address TEXT,
+		trn TEXT,
+		info_flag INTEGER DEFAULT 0,
+		trn_flag INTEGER DEFAULT 0,
+		inserted TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`)
+	
+	return err
+}
+
 func init_network() {
 	log.Info("网络测试开始")
 
@@ -142,8 +240,8 @@ func init_network() {
 		log.Error("网络错误")
 		panic(err)
 	}
-
 }
+
 func init_signal() {
 	// 创建一个通道来接收操作系统的信号
 	sigCh := make(chan os.Signal, 1)
@@ -159,6 +257,7 @@ func init_signal() {
 		os.Exit(0)
 	}()
 }
+
 func init_flag() flagStruct {
 	var f flagStruct
 	flag.StringVar(&f.config_file, "c", "config.yaml", "打开配置文件")
@@ -166,35 +265,379 @@ func init_flag() flagStruct {
 	return f
 }
 
+func setupRouter() *gin.Engine {
+	r := gin.Default()
+	
+	// 加载静态文件
+	r.Static("/static", "./static")
+	r.LoadHTMLGlob("templates/*")
+	
+	// 首页
+	r.GET("/", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "index.html", gin.H{
+			"title": "亚马逊爬虫工具",
+		})
+	})
+	
+	// API路由
+	api := r.Group("/api")
+	{
+		// 获取爬虫状态
+		api.GET("/status", getStatus)
+		
+		// 关键词管理
+		api.GET("/keywords", getKeywords)
+		api.POST("/keywords", addKeyword)
+		api.DELETE("/keywords/:id", deleteKeyword)
+		
+		// 启动爬虫
+		api.POST("/crawler/start", startCrawler)
+		
+		// 获取爬虫结果
+		api.GET("/results", getResults)
+		api.GET("/sellers", getSellers)
+		
+		// 获取配置
+		api.GET("/config", getConfig)
+		api.POST("/config", updateConfig)
+		
+		// 获取cookie
+		api.GET("/cookie", getCookie)
+		api.POST("/cookie", updateCookie)
+	}
+	
+	return r
+}
+
 func main() {
 	f := init_flag()
 	init_config(f)
 	init_rebots()
-	init_mysql()
+	init_sqlite()
 	init_network()
 	init_signal()
 
 	app.start()
-
-	for app.Exec.Loop.all_time = 0; app.Exec.Loop.all_time < app.Exec.Loop.All; app.Exec.Loop.all_time++ {
-		var search searchStruct
-		search.main()
-
-		var product productStruct
-		product.main()
-
-		var seller sellerStruct
-		seller.main()
-	}
-
+	
+	// 启动爬虫后台任务
+	go runCrawlerTasks()
+	
+	// 启动Web服务器
+	r := setupRouter()
+	log.Infof("Web服务器已启动，端口: %s", app.Basic.ServerPort)
+	r.Run(":" + app.Basic.ServerPort)
 }
+
+// 后台运行爬虫任务
+func runCrawlerTasks() {
+	for app.Exec.Loop.all_time = 0; app.Exec.Loop.all_time < app.Exec.Loop.All; app.Exec.Loop.all_time++ {
+		if app.Exec.Enable.Search {
+			var search searchStruct
+			search.main()
+		}
+
+		if app.Exec.Enable.Product {
+			var product productStruct
+			product.main()
+		}
+
+		if app.Exec.Enable.Seller {
+			var seller sellerStruct
+			seller.main()
+		}
+		
+		// 休息一段时间，避免CPU占用过高
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// API处理函数
+func getStatus(c *gin.Context) {
+	status := map[string]interface{}{
+		"search_enabled":  app.Exec.Enable.Search,
+		"product_enabled": app.Exec.Enable.Product,
+		"seller_enabled":  app.Exec.Enable.Seller,
+		"search_times":    app.Exec.Loop.search_time,
+		"product_times":   app.Exec.Loop.product_time,
+		"seller_times":    app.Exec.Loop.seller_time,
+	}
+	
+	c.JSON(http.StatusOK, status)
+}
+
+func getKeywords(c *gin.Context) {
+	rows, err := app.db.Query("SELECT id, zh_key, en_key, priority FROM category ORDER BY priority DESC")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	
+	var keywords []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var zhKey, enKey string
+		var priority int
+		if err := rows.Scan(&id, &zhKey, &enKey, &priority); err != nil {
+			continue
+		}
+		
+		keywords = append(keywords, map[string]interface{}{
+			"id":       id,
+			"zh_key":   zhKey,
+			"en_key":   enKey,
+			"priority": priority,
+		})
+	}
+	
+	c.JSON(http.StatusOK, keywords)
+}
+
+func addKeyword(c *gin.Context) {
+	var keyword struct {
+		ZhKey    string `json:"zh_key" binding:"required"`
+		EnKey    string `json:"en_key" binding:"required"`
+		Priority int    `json:"priority"`
+	}
+	
+	if err := c.BindJSON(&keyword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	res, err := app.db.Exec("INSERT INTO category (zh_key, en_key, priority) VALUES (?, ?, ?)",
+		keyword.ZhKey, keyword.EnKey, keyword.Priority)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	
+	id, _ := res.LastInsertId()
+	c.JSON(http.StatusOK, gin.H{"id": id})
+}
+
+func deleteKeyword(c *gin.Context) {
+	id := c.Param("id")
+	_, err := app.db.Exec("DELETE FROM category WHERE id = ?", id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+func startCrawler(c *gin.Context) {
+	var config struct {
+		Search  bool `json:"search"`
+		Product bool `json:"product"`
+		Seller  bool `json:"seller"`
+	}
+	
+	if err := c.BindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	app.Exec.Enable.Search = config.Search
+	app.Exec.Enable.Product = config.Product
+	app.Exec.Enable.Seller = config.Seller
+	
+	c.JSON(http.StatusOK, gin.H{"status": "started"})
+}
+
+func getResults(c *gin.Context) {
+	limit := c.DefaultQuery("limit", "100")
+	offset := c.DefaultQuery("offset", "0")
+	
+	rows, err := app.db.Query(`
+		SELECT p.id, p.url, p.param, p.status, c.zh_key, c.en_key 
+		FROM product p
+		LEFT JOIN search_statistics s ON p.id = s.id
+		LEFT JOIN category c ON s.category_id = c.id
+		ORDER BY p.id DESC LIMIT ? OFFSET ?
+	`, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	
+	var products []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var url, param string
+		var status int
+		var zhKey, enKey sql.NullString
+		
+		if err := rows.Scan(&id, &url, &param, &status, &zhKey, &enKey); err != nil {
+			continue
+		}
+		
+		products = append(products, map[string]interface{}{
+			"id":     id,
+			"url":    url,
+			"param":  param,
+			"status": status,
+			"zh_key": zhKey.String,
+			"en_key": enKey.String,
+		})
+	}
+	
+	c.JSON(http.StatusOK, products)
+}
+
+func getSellers(c *gin.Context) {
+	limit := c.DefaultQuery("limit", "100")
+	offset := c.DefaultQuery("offset", "0")
+	trn := c.DefaultQuery("trn", "")
+	
+	query := `
+		SELECT id, seller_id, status, name, address, trn, info_flag, trn_flag
+		FROM seller
+		WHERE 1=1
+	`
+	var args []interface{}
+	
+	if trn != "" {
+		query += " AND trn LIKE ?"
+		args = append(args, "%"+trn+"%")
+	}
+	
+	query += " ORDER BY id DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+	
+	rows, err := app.db.Query(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	
+	var sellers []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var sellerID string
+		var status, infoFlag, trnFlag int
+		var name, address, trn sql.NullString
+		
+		if err := rows.Scan(&id, &sellerID, &status, &name, &address, &trn, &infoFlag, &trnFlag); err != nil {
+			continue
+		}
+		
+		sellers = append(sellers, map[string]interface{}{
+			"id":        id,
+			"seller_id": sellerID,
+			"status":    status,
+			"name":      name.String,
+			"address":   address.String,
+			"trn":       trn.String,
+			"info_flag": infoFlag,
+			"trn_flag":  trnFlag,
+		})
+	}
+	
+	c.JSON(http.StatusOK, sellers)
+}
+
+func getConfig(c *gin.Context) {
+	config := map[string]interface{}{
+		"app_id":           app.Basic.App_id,
+		"host_id":          app.Basic.Host_id,
+		"domain":           app.Basic.Domain,
+		"search_enabled":   app.Exec.Enable.Search,
+		"product_enabled":  app.Exec.Enable.Product,
+		"seller_enabled":   app.Exec.Enable.Seller,
+		"search_priority":  app.Exec.Search_priority,
+		"proxy_enabled":    app.Proxy.Enable,
+		"proxy_socks5":     app.Proxy.Sockc5,
+	}
+	
+	c.JSON(http.StatusOK, config)
+}
+
+func updateConfig(c *gin.Context) {
+	var config struct {
+		AppID          int      `json:"app_id"`
+		HostID         int      `json:"host_id"`
+		Domain         string   `json:"domain"`
+		SearchEnabled  bool     `json:"search_enabled"`
+		ProductEnabled bool     `json:"product_enabled"`
+		SellerEnabled  bool     `json:"seller_enabled"`
+		SearchPriority int      `json:"search_priority"`
+		ProxyEnabled   bool     `json:"proxy_enabled"`
+		ProxySocks5    []string `json:"proxy_socks5"`
+	}
+	
+	if err := c.BindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	app.Basic.App_id = config.AppID
+	app.Basic.Host_id = config.HostID
+	app.Basic.Domain = config.Domain
+	app.Exec.Enable.Search = config.SearchEnabled
+	app.Exec.Enable.Product = config.ProductEnabled
+	app.Exec.Enable.Seller = config.SellerEnabled
+	app.Exec.Search_priority = config.SearchPriority
+	app.Proxy.Enable = config.ProxyEnabled
+	app.Proxy.Sockc5 = config.ProxySocks5
+	
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+func getCookie(c *gin.Context) {
+	var cookie string
+	err := app.db.QueryRow("SELECT cookie FROM cookie WHERE host_id = ?", app.Basic.Host_id).Scan(&cookie)
+	if err != nil {
+		cookie = ""
+	}
+	
+	c.JSON(http.StatusOK, gin.H{"cookie": cookie})
+}
+
+func updateCookie(c *gin.Context) {
+	var cookieData struct {
+		Cookie string `json:"cookie" binding:"required"`
+	}
+	
+	if err := c.BindJSON(&cookieData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	// 尝试更新
+	res, err := app.db.Exec("UPDATE cookie SET cookie = ? WHERE host_id = ?", 
+		cookieData.Cookie, app.Basic.Host_id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		// 没有记录，插入新记录
+		_, err = app.db.Exec("INSERT INTO cookie (host_id, cookie) VALUES (?, ?)",
+			app.Basic.Host_id, cookieData.Cookie)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	
+	app.cookie = cookieData.Cookie
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
 func (app *appConfig) get_cookie() (string, error) {
 	var cookie string
 	if app.Basic.Host_id == 0 {
 		return "", fmt.Errorf("配置文件中host_id为0，cookie将为空")
 	}
 
-	if err := app.db.QueryRow("select cookie from cookie where host_id = ?", app.Basic.Host_id).Scan(&cookie); err != nil {
+	err := app.db.QueryRow("SELECT cookie FROM cookie WHERE host_id = ?", app.Basic.Host_id).Scan(&cookie)
+	if err != nil {
 		return "", err
 	}
 	cookie = strings.TrimSpace(cookie)
@@ -205,12 +648,13 @@ func (app *appConfig) get_cookie() (string, error) {
 	app.cookie = cookie
 	return app.cookie, nil
 }
+
 func (app *appConfig) start() {
 	if app.Basic.Test {
 		log.Infof("测试模式启动")
 		return
 	}
-	r, err := app.db.Exec("insert into application (app_id) values(?)", app.Basic.App_id)
+	r, err := app.db.Exec("INSERT INTO application (app_id) VALUES(?)", app.Basic.App_id)
 	if err != nil {
 		panic(err)
 	}
@@ -220,17 +664,19 @@ func (app *appConfig) start() {
 	}
 	app.primary_id = id
 }
+
 func (app *appConfig) update(status int) {
-	_, err := app.db.Exec("update application set status=? where id=?", status, app.primary_id)
+	_, err := app.db.Exec("UPDATE application SET status=?, update_time=CURRENT_TIMESTAMP WHERE id=?", status, app.primary_id)
 	if err != nil {
 		panic(err)
 	}
 }
+
 func (app *appConfig) end() {
 	if app.Basic.Test {
 		return
 	}
-	if _, err := app.db.Exec("update application set status=? where id=?", MYSQL_APPLICATION_STATUS_OVER, app.primary_id); err != nil {
+	if _, err := app.db.Exec("UPDATE application SET status=?, update_time=CURRENT_TIMESTAMP WHERE id=?", SQLITE_APPLICATION_STATUS_OVER, app.primary_id); err != nil {
 		log.Error(err)
 	}
 }
