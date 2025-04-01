@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,11 +25,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const SQLITE_APPLICATION_STATUS_START int = 0
-const SQLITE_APPLICATION_STATUS_OVER int = 1
-const SQLITE_APPLICATION_STATUS_SEARCH int = 2
-const SQLITE_APPLICATION_STATUS_PRODUCT int = 3
-const SQLITE_APPLICATION_STATUS_SELLER int = 4
+// 全局控制变量
+var (
+	isRunning    bool = false
+	stopRequested bool = false
+	crawlerMutex  sync.Mutex
+)
+
+// 一些常量定义
+const (
+	SQLITE_APPLICATION_STATUS_START int = 0
+	SQLITE_APPLICATION_STATUS_OVER int = 1
+	SQLITE_APPLICATION_STATUS_SEARCH int = 2
+	SQLITE_APPLICATION_STATUS_PRODUCT int = 3
+	SQLITE_APPLICATION_STATUS_SELLER int = 4
+)
 
 type appConfig struct {
 	Basic      `yaml:"basic"`
@@ -348,8 +359,9 @@ func setupRouter() *gin.Engine {
 		api.POST("/keywords", addKeyword)
 		api.DELETE("/keywords/:id", deleteKeyword)
 		
-		// 启动爬虫
+		// 爬虫控制
 		api.POST("/crawler/start", startCrawler)
+		api.POST("/crawler/stop", stopCrawler)
 		
 		// 获取爬虫结果
 		api.GET("/results", getResults)
@@ -391,29 +403,112 @@ func main() {
 
 // 后台运行爬虫任务
 func runCrawlerTasks() {
-	for app.Exec.Loop.all_time = 0; app.Exec.Loop.all_time < app.Exec.Loop.All; app.Exec.Loop.all_time++ {
+	crawlerMutex.Lock()
+	if isRunning {
+		crawlerMutex.Unlock()
+		return
+	}
+	
+	isRunning = true
+	stopRequested = false
+	crawlerMutex.Unlock()
+	
+	log.Info("爬虫任务已启动")
+	
+	defer func() {
+		crawlerMutex.Lock()
+		isRunning = false
+		stopRequested = false
+		crawlerMutex.Unlock()
+		log.Info("爬虫任务已结束")
+	}()
+	
+	for app.Exec.Loop.all_time = 0; app.Exec.Loop.all_time < app.Exec.Loop.All || app.Exec.Loop.All == 0; app.Exec.Loop.all_time++ {
+		// 检查是否请求停止
+		crawlerMutex.Lock()
+		if stopRequested {
+			crawlerMutex.Unlock()
+			return
+		}
+		crawlerMutex.Unlock()
+		
 		if app.Exec.Enable.Search {
 			var search searchStruct
 			search.main()
 		}
+
+		// 模拟人类行为的随机暂停
+		humanLikePause()
+
+		// 再次检查是否请求停止
+		crawlerMutex.Lock()
+		if stopRequested {
+			crawlerMutex.Unlock()
+			return
+		}
+		crawlerMutex.Unlock()
 
 		if app.Exec.Enable.Product {
 			var product productStruct
 			product.main()
 		}
 
+		// 模拟人类行为的随机暂停
+		humanLikePause()
+		
+		// 再次检查是否请求停止
+		crawlerMutex.Lock()
+		if stopRequested {
+			crawlerMutex.Unlock()
+			return
+		}
+		crawlerMutex.Unlock()
+
 		if app.Exec.Enable.Seller {
 			var seller sellerStruct
 			seller.main()
 		}
 		
-		// 休息一段时间，避免CPU占用过高
-		time.Sleep(5 * time.Second)
+		// 模拟人类行为的随机暂停
+		humanLikePause()
 	}
+}
+
+// 模拟人类行为的随机暂停
+func humanLikePause() {
+	// 生成30-120秒的随机暂停时间
+	pauseTime := 30 + rand.Intn(90)
+	log.Infof("模拟人类行为，暂停 %d 秒", pauseTime)
+	time.Sleep(time.Duration(pauseTime) * time.Second)
+}
+
+func stopCrawler(c *gin.Context) {
+	crawlerMutex.Lock()
+	defer crawlerMutex.Unlock()
+	
+	if !isRunning {
+		c.JSON(http.StatusOK, gin.H{"status": "not_running"})
+		return
+	}
+	
+	stopRequested = true
+	log.Info("已发出停止爬虫请求")
+	c.JSON(http.StatusOK, gin.H{"status": "stopping"})
 }
 
 // API处理函数
 func getStatus(c *gin.Context) {
+	crawlerMutex.Lock()
+	crawlerStatus := "stopped"
+	if isRunning {
+		if stopRequested {
+			crawlerStatus = "stopping"
+		} else {
+			crawlerStatus = "running"
+		}
+	}
+	crawlerMutex.Unlock()
+	
 	status := map[string]interface{}{
 		"search_enabled":  app.Exec.Enable.Search,
 		"product_enabled": app.Exec.Enable.Product,
@@ -421,6 +516,7 @@ func getStatus(c *gin.Context) {
 		"search_times":    app.Exec.Loop.search_time,
 		"product_times":   app.Exec.Loop.product_time,
 		"seller_times":    app.Exec.Loop.seller_time,
+		"crawler_status":  crawlerStatus,
 	}
 	
 	c.JSON(http.StatusOK, status)

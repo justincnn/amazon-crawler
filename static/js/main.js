@@ -32,6 +32,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 启动爬虫按钮点击事件
     document.getElementById('startCrawlerBtn').addEventListener('click', startCrawler);
+    
+    // 停止爬虫按钮点击事件
+    document.getElementById('stopCrawlerBtn').addEventListener('click', stopCrawler);
 
     // 保存关键词按钮点击事件
     document.getElementById('saveKeywordBtn').addEventListener('click', saveKeyword);
@@ -77,6 +80,29 @@ function loadStatus() {
             document.getElementById('searchTimes').textContent = data.search_times;
             document.getElementById('productTimes').textContent = data.product_times;
             document.getElementById('sellerTimes').textContent = data.seller_times;
+            
+            // 更新UI，根据爬虫状态
+            const startBtn = document.getElementById('startCrawlerBtn');
+            const stopBtn = document.getElementById('stopCrawlerBtn');
+            
+            switch(data.crawler_status) {
+                case 'running':
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    startBtn.textContent = '爬虫运行中';
+                    break;
+                case 'stopping':
+                    startBtn.disabled = true;
+                    stopBtn.disabled = true;
+                    startBtn.textContent = '爬虫停止中';
+                    break;
+                case 'stopped':
+                default:
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    startBtn.textContent = '启动爬虫';
+                    break;
+            }
         })
         .catch(error => console.error('Error:', error));
 }
@@ -103,6 +129,19 @@ function startCrawler() {
     .then(response => response.json())
     .then(data => {
         alert('爬虫已启动！');
+        loadStatus();
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+// 停止爬虫
+function stopCrawler() {
+    fetch('/api/crawler/stop', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        alert('爬虫已停止！');
         loadStatus();
     })
     .catch(error => console.error('Error:', error));
