@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y sqlite3 libsqlite3-dev
 # 确保依赖已下载
 RUN go mod download
 
-# 编译应用（简化为基本命令）
-RUN go build -o amazon-crawler .
+# 编译应用（添加详细输出以诊断错误）
+RUN go build -v -x -o amazon-crawler . 2>&1 || (echo "构建失败，查看错误日志" && cat /tmp/build-error.log && exit 1)
 
 FROM debian:bullseye-slim
 
