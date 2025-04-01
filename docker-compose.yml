@@ -2,7 +2,10 @@ version: '3'
 
 services:
   amazon-crawler:
-    image: justincnn/amazon-crawler:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: amazon-crawler:local
     container_name: amazon-crawler
     restart: unless-stopped
     ports:
