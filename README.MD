@@ -2,7 +2,6 @@
 
 一种在亚马逊平台，根据关键词支持多主机搜索商家信息（名称、地址、税号）的工具，适用多种主流操作系统。带有Web界面，可直接通过浏览器进行操作。
 
-**问题反馈**： 联系方式位于[个人首页](https://github.com/tengfei-xy)
 
 ![Docker自动构建](https://github.com/用户名/amazon-crawler/actions/workflows/docker-build.yml/badge.svg)
 
