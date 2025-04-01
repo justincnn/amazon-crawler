@@ -11,8 +11,8 @@ COPY . .
 # 安装sqlite3驱动依赖
 RUN apt-get update && apt-get install -y sqlite3 libsqlite3-dev
 
-# 测试SQLite3驱动
-RUN go build -o test_sqlite github.com/mattn/go-sqlite3
+# 确保依赖已下载
+RUN go mod download
 
 # 编译应用（简化为基本命令）
 RUN go build -o amazon-crawler .
