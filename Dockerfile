@@ -5,23 +5,17 @@ WORKDIR /app
 # 显示Go环境信息
 RUN go version && go env
 
-# 复制go.mod和go.sum文件
-COPY go.mod go.sum ./
-# 下载依赖（显示详细日志）
-RUN go mod download -x
-
-# 复制源代码
+# 复制所有文件
 COPY . .
 
-# 先检查代码问题
-RUN go vet ./...
+# 安装sqlite3驱动依赖
+RUN apt-get update && apt-get install -y sqlite3 libsqlite3-dev
 
-# 编译应用（添加详细调试信息）
-RUN go build -v -x -o amazon-crawler . 2>&1 || \
-    (echo "===== 构建失败! 错误详情: =====" && \
-     go build -v -x -o amazon-crawler . 2>&1 && \
-     echo "================================" && \
-     exit 1)
+# 测试SQLite3驱动
+RUN go build -o test_sqlite github.com/mattn/go-sqlite3
+
+# 编译应用（简化为基本命令）
+RUN go build -o amazon-crawler .
 
 FROM debian:bullseye-slim
 
