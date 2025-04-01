@@ -4,6 +4,8 @@
 
 **问题反馈**： 联系方式位于[个人首页](https://github.com/tengfei-xy)
 
+![Docker自动构建](https://github.com/用户名/amazon-crawler/actions/workflows/docker-build.yml/badge.svg)
+
 # 一、爬虫说明
 
 请尊守网站的robots.txt，本项目中的程序的任何http请求均取决于robots.txt
@@ -19,6 +21,7 @@
 - 关键词管理：通过Web界面添加和管理关键词
 - 爬虫结果显示：在Web界面上直接查看和筛选爬虫结果
 - Docker部署：支持通过Docker快速部署
+- CI/CD：GitHub Actions自动构建Docker镜像并推送到Docker Hub
 
 # 三、使用说明
 
@@ -41,12 +44,12 @@
 
 4. 打开浏览器，访问 http://localhost:8080 (或配置的其他端口)
 
-## 方法二：Docker部署
+## 方法二：Docker部署（本地构建）
 
 1. 克隆仓库
 
    ```bash
-   git clone https://github.com/tengfei-xy/amazon-crawler.git
+   git clone https://github.com/用户名/amazon-crawler.git
    cd amazon-crawler
    ```
 
@@ -57,6 +60,13 @@
    ```
 
 3. 打开浏览器，访问 http://localhost:8080
+
+## 方法三：直接从Docker Hub拉取镜像
+
+```bash
+docker pull 用户名/amazon-crawler:latest
+docker run -d -p 8080:8080 -v ./data:/app/data 用户名/amazon-crawler:latest
+```
 
 # 四、Web界面使用
 
@@ -117,4 +127,25 @@
 
 - Cookie问题：亚马逊的cookie有效期较短，需要定期更新
 - 网络环境：建议使用代理，避免IP被封
-- 爬虫频率：请合理控制爬取频率，避免对目标网站造成压力 
+- 爬虫频率：请合理控制爬取频率，避免对目标网站造成压力
+
+# 七、CI/CD自动构建
+
+本项目使用GitHub Actions自动构建Docker镜像并推送到Docker Hub。当推送代码到main或master分支，或创建新的标签（格式为v*）时，将自动触发构建流程。
+
+## 设置GitHub Secrets
+
+要启用自动构建，需要在GitHub仓库中设置以下Secrets：
+
+1. `DOCKERHUB_USERNAME` - 你的Docker Hub用户名
+2. `DOCKERHUB_TOKEN` - 你的Docker Hub访问令牌（不是密码）
+
+### 获取Docker Hub访问令牌
+
+1. 登录到[Docker Hub](https://hub.docker.com/)
+2. 点击右上角你的头像，选择"Account Settings"
+3. 在左侧菜单中选择"Security"
+4. 点击"New Access Token"
+5. 输入令牌名称（例如"GitHub Actions"）并选择权限
+6. 点击"Generate"
+7. 复制生成的令牌（只显示一次）并添加到GitHub Secrets 
