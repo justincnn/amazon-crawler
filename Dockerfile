@@ -2,8 +2,12 @@ FROM golang:1.19-alpine AS builder
 
 WORKDIR /app
 
-# 安装编译依赖（增加sqlite-dev）
-RUN apk add --no-cache gcc musl-dev git sqlite-dev
+# 安装编译依赖（增加更多必要依赖）
+RUN apk add --no-cache gcc musl-dev git sqlite-dev build-base
+
+# 设置Go环境变量
+ENV CGO_ENABLED=1
+ENV GOOS=linux
 
 # 复制go.mod和go.sum文件
 COPY go.mod go.sum ./
@@ -14,8 +18,11 @@ RUN go mod download
 # 复制源代码
 COPY . .
 
-# 编译应用(添加详细错误输出)
-RUN go build -v -o amazon-crawler .
+# 查看编译环境
+RUN go env
+
+# 编译应用(使用更安全的编译标志)
+RUN go build -v -o amazon-crawler . || (go build -v -x -o amazon-crawler . 2>&1 | tee build_error.log && exit 1)
 
 # 使用alpine作为基础镜像，减小镜像大小
 FROM alpine:latest
