@@ -77,18 +77,12 @@ func (product *productStruct) main() error {
 			if err == ERROR_NOT_SELLER_URL {
 				product.update_status(primary_id, MYSQL_PRODUCT_STATUS_NO_PRODUCT)
 				continue
-			} else if err == ERROR_NOT_404 || err == ERROR_NOT_503 || err == ERROR_VERIFICATION {
-				product.update_status(primary_id, MYSQL_PRODUCT_STATUS_ERROR_OVER)
-				log.Error(err)
-				sleep(300)
-				continue
-			} else {
-				product.update_status(primary_id, MYSQL_PRODUCT_STATUS_ERROR_OVER)
-				log.Error(err)
-				sleep(300)
-				continue
-
 			}
+			// 404/503/验证码等: 有限速重试,不再 300s 卡死
+			product.update_status(primary_id, MYSQL_PRODUCT_STATUS_ERROR_OVER)
+			log.Error(err)
+			sleep(60)
+			continue
 		}
 
 		product.get_seller_id()
@@ -153,7 +147,9 @@ func (product *productStruct) request(url string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		log.Errorf("状态码:%d", resp.StatusCode)
+		// 原代码返回 nil error,上层误判成功;(P0)
+		err = fmt.Errorf("状态码:%d", resp.StatusCode)
+		log.Errorf("%v", err)
 		return err
 	}
 

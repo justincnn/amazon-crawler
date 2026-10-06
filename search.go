@@ -99,7 +99,8 @@ func (s *searchStruct) get_category() (*sql.Rows, error) {
 		return app.db.Query(`select id,zh_key,en_key from category order by priority DESC`)
 	case 2:
 		log.Infof("搜索次数少优先")
-		return app.db.Query(`SELECT c.id, c.zh_key, c.en_key  FROM category c LEFT JOIN search_statistics s ON s.category_id = c.id GROUP BY c.id ORDER BY COUNT(s.category_id),id`)
+		// 原GROUP BY只含c.id选取zh_key/en_key, MySQL5.7+ ONLY_FULL_GROUP_BY 直接报错
+		return app.db.Query(`SELECT c.id, c.zh_key, c.en_key FROM category c LEFT JOIN search_statistics s ON s.category_id = c.id GROUP BY c.id, c.zh_key, c.en_key ORDER BY COUNT(s.category_id), c.id`)
 	}
 	log.Infof("错误的输入，按搜索优先级优先")
 	return app.db.Query(`select id,zh_key,en_key from category order by priority DESC `)
@@ -129,7 +130,8 @@ func (s *searchStruct) set_en_key() string {
 	return strings.ReplaceAll(strings.ReplaceAll(s.en_key, " ", "+"), "'", "%27")
 }
 func (s *searchStruct) request(seq int) (*goquery.Document, error) {
-	url := fmt.Sprintf("https://%s/s?k=%s&page=%d&crid=2V9436DZJ6IJF&qid=1699839233&sprefix=clothe%%2Caps%%2C552&ref=sr_pg_2", app.Domain, s.en_key, seq)
+	// 移除硬编码的 crid/qid/sprefix 幽灵参数(原代码照搬他人历史URL, 亚马逊风控一眼假)
+	url := fmt.Sprintf("https://%s/s?k=%s&page=%d", app.Domain, s.en_key, seq)
 
 	err := robot.IsAllow(userAgent, url)
 	if err != nil {

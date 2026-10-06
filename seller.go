@@ -31,7 +31,7 @@ const MYSQL_SELLER_STATUS_INFO_INSERT int = MYSQL_PRODUCT_STATUS_INSERT
 const MYSQL_SELLER_STATUS_INFO_OK int = 1
 const MYSQL_SELLER_STATUS_INFO_ALL_NO_NAME int = 2
 const MYSQL_SELLER_STATUS_INFO_ALL_NO_ADDRESS int = 3
-const MYSQL_SELLER_STATUS_INFO_ALL_NO_TRN int = 3
+const MYSQL_SELLER_STATUS_INFO_ALL_NO_TRN int = 4
 
 func (seller *sellerStruct) prepare() {
 	app.update(MYSQL_APPLICATION_STATUS_SELLER)
@@ -87,6 +87,13 @@ func (seller *sellerStruct) main() error {
 
 	}
 	for row.Next() {
+		// 重置字段,避免上一商家数据残留(曾导致 A 家 TRN 记到 B 家)
+		seller.businessName = ""
+		seller.trn = ""
+		seller.address = ""
+		seller.trn_status = 0
+		seller.all_status = MYSQL_SELLER_STATUS_INFO_OK
+
 		if err := row.Scan(&seller.primary_id, &seller.seller_id); err != nil {
 			log.Error(err)
 			continue
@@ -98,9 +105,22 @@ func (seller *sellerStruct) main() error {
 			continue
 		}
 
-		for err := seller.request(); err != nil; {
-			log.Error(err)
-			sleep(120)
+		var lastErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			lastErr = seller.request()
+			if lastErr == nil {
+				break
+			}
+			log.Error(lastErr)
+			sleep(30)
+		}
+		if lastErr != nil {
+			log.Errorf("请求失败已重试3次,跳过 商家ID:%s err:%v", seller.seller_id, lastErr)
+			seller.all_status = MYSQL_SELLER_STATUS_INFO_ALL_NO_NAME
+			if err := seller.update(); err != nil {
+				log.Error(err)
+			}
+			continue
 		}
 
 		seller.trnCheck()
@@ -179,55 +199,60 @@ func (seller *sellerStruct) request() error {
 	sellerTxt := doc.Find("div#page-section-detail-seller-info").Find("span").Text()
 
 	seller.all_status = MYSQL_SELLER_STATUS_INFO_OK
-	var info []string
 
-	for _, line := range strings.Split(sellerTxt, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if line == "Business Name:" {
-			info = append(info, line)
-		} else if strings.Contains(line, "Business Name:") {
-			line = strings.ReplaceAll(line, "Business Name:", "")
-			info = append(info, line)
-			info = append(info, "Business Type:")
-		} else if strings.Contains(line, "Business Type:") {
-			line = strings.ReplaceAll(line, "Business Type:", "")
-			info = append(info, line)
-			info = append(info, "Business Type:")
-		} else if strings.Contains(line, "Trade Register Number:") {
-			line = strings.ReplaceAll(line, "Trade Register Number:", "")
-			info = append(info, line)
-			info = append(info, "Trade Register Number:")
-		} else if strings.Contains(line, "Business Address:") {
-			line = strings.ReplaceAll(line, "Business Address:", "")
-			info = append(info, line)
-			info = append(info, "Business Address:")
-		} else if strings.Contains(line, "VAT Number:") {
-			line = strings.ReplaceAll(line, "VAT Number:", "")
-			info = append(info, line)
-			info = append(info, "VAT Number:")
-		} else {
-			info = append(info, line)
+	// 逐行解析 span 文本: 每行形如 "Business Name: XXX" 或 "XXX"
+	// 兼容 Amazon 两种排版(标签与值同行 / 标签单独一行、值在下一行)
+	rawLines := strings.Split(sellerTxt, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, l := range rawLines {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			lines = append(lines, l)
 		}
 	}
-
-	for i, line := range info {
-		if strings.Contains(line, "Business Name") {
-			seller.businessName = info[i+1]
-		} else if strings.Contains(line, "Trade Register Number") {
-			seller.trn = info[i+1]
-		} else if strings.Contains(line, "Business Address") {
-			seller.address = strings.Join(info[i+1:], " ")
-		} else if strings.Contains(line, "VAT Number") {
-			// seller.address = strings.Join(info[i+1:], " ")
-		} else if strings.Contains(line, "Business Type") {
-			// seller.address = strings.Join(info[i+1:], " ")
+	labels := map[string]*string{
+		"Business Name:":         &seller.businessName,
+		"Trade Register Number:": &seller.trn,
+		"Business Address:":      &seller.address,
+		"VAT Number:":            nil, // 不提取,仅作分隔符
+	}
+parse:
+	for i := 0; i < len(lines); i++ {
+		for label, dst := range labels {
+			if !strings.HasPrefix(lines[i], label) {
+				continue
+			}
+			value := strings.TrimSpace(strings.TrimPrefix(lines[i], label))
+			if value == "" {
+				// 值在下一行
+				if i+1 < len(lines) && !isSellerLabel(lines[i+1]) {
+					value = strings.TrimSpace(lines[i+1])
+					i++
+				}
+			}
+			if dst != nil && value != "" {
+				*dst = value
+				log.Infof("解析到 %s %s", label, value)
+			}
+			continue parse
+		}
+		// 未匹配标签的行: 若是地址的续行(标签后的第二行起),续拼进地址
+		if len(seller.address) > 0 && i > 0 && !strings.Contains(lines[i-1], "Address") {
+			seller.address += " " + lines[i]
 		}
 	}
 
 	return nil
+}
+
+// 判断某行是否为卖家信息标签行
+func isSellerLabel(line string) bool {
+	for _, label := range []string{"Business Name:", "Business Type:", "Trade Register Number:", "Business Address:", "VAT Number:"} {
+		if strings.HasPrefix(line, label) {
+			return true
+		}
+	}
+	return false
 }
 
 // 作用: 检查TRN
@@ -236,7 +261,6 @@ func (seller *sellerStruct) trnCheck() {
 	if len(seller.trn) == 0 {
 		log.Warnf("检查结果 TRN为空")
 		seller.trn_status = MYSQL_SELLER_STATUS_TRN_NO
-		seller.all_status = MYSQL_SELLER_STATUS_INFO_ALL_NO_TRN
 		return
 	} else if len(seller.trn) < 18 {
 		log.Warnf("检查结果 TRN: %s (非中国)", seller.trn)
@@ -261,7 +285,6 @@ func (seller *sellerStruct) trnCheck() {
 func (seller *sellerStruct) addressCheck() {
 	if len(seller.address) == 0 {
 		log.Errorf("检查结果 地址为空")
-		seller.all_status = MYSQL_SELLER_STATUS_INFO_ALL_NO_ADDRESS
 		return
 	}
 	log.Infof("查找结果 地址: %s", seller.address)
@@ -269,12 +292,25 @@ func (seller *sellerStruct) addressCheck() {
 func (seller *sellerStruct) nameCheck() {
 	if len(seller.businessName) == 0 {
 		log.Errorf("检查结果 商家名称为空")
-		seller.all_status = MYSQL_SELLER_STATUS_INFO_ALL_NO_NAME
 		return
 	}
 	log.Infof("查找结果 商家名称: %s", seller.businessName)
 }
+
+// 汇总三个字段的缺失情况,优先级: 名称缺失 > 地址缺失 > TRN缺失(与视图语义一致)
+func (seller *sellerStruct) calcAllStatus() int {
+	if len(seller.businessName) == 0 {
+		return MYSQL_SELLER_STATUS_INFO_ALL_NO_NAME
+	}
+	if len(seller.address) == 0 {
+		return MYSQL_SELLER_STATUS_INFO_ALL_NO_ADDRESS
+	}
+	if len(seller.trn) == 0 {
+		return MYSQL_SELLER_STATUS_INFO_ALL_NO_TRN
+	}
+	return MYSQL_SELLER_STATUS_INFO_OK
+}
 func (seller *sellerStruct) update() error {
-	_, err := app.db.Exec("update seller set trn_status=?,trn=?,name=?,address=?,all_status=? where id=? and app_id=?", seller.trn_status, seller.trn, seller.businessName, seller.address, seller.all_status, seller.primary_id, app.Basic.App_id)
+	_, err := app.db.Exec("update seller set trn_status=?,trn=?,name=?,address=?,all_status=? where id=? and app_id=?", seller.trn_status, seller.trn, seller.businessName, seller.address, seller.calcAllStatus(), seller.primary_id, app.Basic.App_id)
 	return err
 }

@@ -31,10 +31,16 @@ func GetRobotFromTxt(txt string) Robots {
 			ua_list.robot = append(ua_list.robot, Robot{ua_name, regexp.MustCompile(strings.ReplaceAll(ua_name, "*", ".*")), []uastruct{}})
 		} else if strings.HasPrefix(line, "Disallow: ") {
 			u := strings.TrimPrefix(line, "Disallow: ")
-
+			// robots 协议: 空的 Disallow 表示允许所有, 不构成限制(原代码空规则会匹配全部URL, 误禁所有请求)
+			if u == "" {
+				continue
+			}
 			ua_list.robot[len(ua_list.robot)-1].ua = append(ua_list.robot[len(ua_list.robot)-1].ua, uastruct{u, regexp.MustCompile(strings.ReplaceAll(u, "*", ".*")), false})
 		} else if strings.HasPrefix(line, "Allow: ") {
 			u := strings.TrimPrefix(line, "Allow: ")
+			if u == "" {
+				continue
+			}
 			ua_list.robot[len(ua_list.robot)-1].ua = append(ua_list.robot[len(ua_list.robot)-1].ua, uastruct{u, regexp.MustCompile(strings.ReplaceAll(u, "*", ".*")), true})
 		}
 	}

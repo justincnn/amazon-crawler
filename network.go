@@ -6,39 +6,58 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
 )
 
-func rangdom_range(max int) int {
-	rand.NewSource(time.Now().UnixNano())
-	return rand.Intn(max)
+// 一个全局随机源,代理轮换不再每次重置种子(原代码同秒内可能选到同一代理)
+var randSrc = rand.New(rand.NewSource(time.Now().UnixNano()))
+var randMu sync.Mutex
+
+func rand_range(max int) int {
+	if max <= 0 {
+		return 0
+	}
+	randMu.Lock()
+	defer randMu.Unlock()
+	return randSrc.Intn(max)
 }
 func get_socks5_proxy() (proxy.Dialer, error) {
 	// 创建一个SOCKS5代理拨号器
-	len := len(app.Proxy.Sockc5)
-	if len == 0 {
+	frozen := app.Proxy.Sockc5
+	if len(frozen) == 0 {
 		return nil, fmt.Errorf("没有可用的代理")
 	}
-	return proxy.SOCKS5("tcp", app.Proxy.Sockc5[rangdom_range(len)], nil, proxy.Direct)
+	return proxy.SOCKS5("tcp", frozen[rand_range(len(frozen))], nil, proxy.Direct)
 }
-func get_client() http.Client {
 
-	proxy, err := get_socks5_proxy()
-	if err != nil {
-		return http.Client{Timeout: time.Second * 60}
+var (
+	clientOnce    sync.Once
+	defaultClient *http.Client
+)
+
+// 复用单个 http.Client(含连接池),不再每次请求新建 TCP/TLS 握手
+func get_client() *http.Client {
+	if !app.Proxy.Enable || len(app.Proxy.Sockc5) == 0 {
+		clientOnce.Do(func() {
+			defaultClient = &http.Client{Timeout: time.Second * 60}
+		})
+		return defaultClient
 	}
-	if app.Proxy.Enable {
-		return http.Client{
-			Transport: &http.Transport{
-				Dial: proxy.Dial,
-			},
-
-			Timeout: time.Second * 60,
-		}
-	} else {
-		return http.Client{Timeout: time.Second * 60}
+	p, err := get_socks5_proxy()
+	if err != nil {
+		clientOnce.Do(func() {
+			defaultClient = &http.Client{Timeout: time.Second * 60}
+		})
+		return defaultClient
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			Dial: p.Dial,
+		},
+		Timeout: time.Second * 60,
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	log "github.com/tengfei-xy/go-log"
@@ -27,6 +28,7 @@ type appConfig struct {
 	Exec       `yaml:"exec"`
 	db         *sql.DB
 	cookie     string
+	cookieExp  time.Time
 	primary_id int64
 }
 type Exec struct {
@@ -76,6 +78,9 @@ var robot Robots
 
 const userAgent = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36`
 
+// cookieTtl: cookie 缓存时间; DB 是唯一事实源,外部随时可改, 故只缓存一小段窗口(原来每请求查一次 DB)
+const cookieTtl = 5 * time.Minute
+
 func init_config(flag flagStruct) {
 	log.Infof("读取配置文件:%s", flag.config_file)
 
@@ -120,7 +125,9 @@ func init_rebots() {
 	robot = GetRobotFromTxt(txt)
 }
 func init_mysql() {
-	DB, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", app.Mysql.Username, app.Mysql.Password, app.Mysql.Ip, app.Mysql.Port, app.Mysql.Database))
+	// DSN 加 charset=utf8mb4, 否则 zh_key 等中文关键词读出来会是乱码
+	DSN := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true", app.Mysql.Username, app.Mysql.Password, app.Mysql.Ip, app.Mysql.Port, app.Mysql.Database)
+	DB, err := sql.Open("mysql", DSN)
 	if err != nil {
 		panic(err)
 	}
@@ -147,7 +154,8 @@ func init_network() {
 func init_signal() {
 	// 创建一个通道来接收操作系统的信号
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGABRT)
+	// SIGKILL 无法被捕获(内核直接杀进程),注册无意义,移除
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGABRT)
 
 	go func() {
 		<-sigCh
@@ -193,6 +201,10 @@ func (app *appConfig) get_cookie() (string, error) {
 	if app.Basic.Host_id == 0 {
 		return "", fmt.Errorf("配置文件中host_id为0，cookie将为空")
 	}
+	// 缓存窗口内不查库(原代码每请求一次 DB 查询)
+	if app.cookie != "" && time.Since(app.cookieExp) < cookieTtl {
+		return app.cookie, nil
+	}
 
 	if err := app.db.QueryRow("select cookie from cookie where host_id = ?", app.Basic.Host_id).Scan(&cookie); err != nil {
 		return "", err
@@ -203,6 +215,7 @@ func (app *appConfig) get_cookie() (string, error) {
 	}
 
 	app.cookie = cookie
+	app.cookieExp = time.Now()
 	return app.cookie, nil
 }
 func (app *appConfig) start() {

@@ -149,7 +149,7 @@ CREATE TABLE `category` (
   `en_key` varchar(50) NOT NULL,
   `priority` int(11) DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=1016 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=1016 DEFAULT CHARSET=utf8mb4;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -181,7 +181,7 @@ CREATE TABLE `product` (
   `app` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   UNIQUE KEY `url` (`url`)
-) ENGINE=InnoDB AUTO_INCREMENT=462720 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=462720 DEFAULT CHARSET=utf8mb4;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -202,7 +202,7 @@ CREATE TABLE `search_statistics` (
   PRIMARY KEY (`id`),
   KEY `category_id` (`category_id`),
   CONSTRAINT `search_statistics_ibfk_1` FOREIGN KEY (`category_id`) REFERENCES `category` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=2352 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=2352 DEFAULT CHARSET=utf8mb4;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -224,7 +224,7 @@ CREATE TABLE `seller` (
   `company_id` char(16) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `seller_id_UNIQUE` (`seller_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=115634 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=115634 DEFAULT CHARSET=utf8mb4;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
