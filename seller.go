@@ -180,51 +180,50 @@ func (seller *sellerStruct) request() error {
 		return fmt.Errorf("内部错误:%v", err)
 	}
 
-	sellerTxt := doc.Find("div#page-section-detail-seller-info").Find("span").Text()
-
-	seller.all_status = MYSQL_SELLER_STATUS_INFO_OK
-
-	// 逐行解析 span 文本: 每行形如 "Business Name: XXX" 或 "XXX"
-	// 兼容 Amazon 两种排版(标签与值同行 / 标签单独一行、值在下一行)
-	rawLines := strings.Split(sellerTxt, "\n")
-	lines := make([]string, 0, len(rawLines))
-	for _, l := range rawLines {
-		l = strings.TrimSpace(l)
-		if l != "" {
-			lines = append(lines, l)
-		}
-	}
+	// 按 DOM 行结构解析: Amazon 商家页每行是一个 <div class="a-row">, 行内 <span class="a-text-bold"> 是标签, 其余 span 是值。
+	// 原实现 Find("span").Text() 把所有 span 文本无分隔拼成一行, 前缀匹配会把 "Business Address:" 吞进 name(实测数据污染)。
 	labels := map[string]*string{
-		"Business Name:":         &seller.businessName,
-		"Trade Register Number:": &seller.trn,
-		"Business Address:":      &seller.address,
-		"VAT Number:":            nil, // 不提取,仅作分隔符
+		"Business Name":         &seller.businessName,
+		"Trade Register Number": &seller.trn,
+		"Business Address":      &seller.address,
 	}
-parse:
-	for i := 0; i < len(lines); i++ {
+	addressMode := false
+	doc.Find("div#page-section-detail-seller-info div.a-row").Each(func(_ int, row *goquery.Selection) {
+		txt := strings.TrimSpace(row.Text())
+		if txt == "" {
+			return
+		}
 		for label, dst := range labels {
-			if !strings.HasPrefix(lines[i], label) {
+			if !strings.HasPrefix(txt, label+":") {
 				continue
 			}
-			value := strings.TrimSpace(strings.TrimPrefix(lines[i], label))
-			if value == "" {
-				// 值在下一行
-				if i+1 < len(lines) && !isSellerLabel(lines[i+1]) {
-					value = strings.TrimSpace(lines[i+1])
-					i++
-				}
+			v := strings.TrimSpace(strings.TrimPrefix(txt, label+":"))
+			if dst == nil {
+				continue
 			}
-			if dst != nil && value != "" {
-				*dst = value
-				log.Infof("解析到 %s %s", label, value)
+			if v == "" && label == "Business Address" {
+				// 地址跨多行(值在后续 indent-left 行)
+				addressMode = true
+			} else {
+				*dst = v
+				log.Infof("解析到 %s %s", label, v)
+				addressMode = false
 			}
-			continue parse
+			return
 		}
-		// 未匹配标签的行: 若是地址的续行(标签后的第二行起),续拼进地址
-		if len(seller.address) > 0 && i > 0 && !strings.Contains(lines[i-1], "Address") {
-			seller.address += " " + lines[i]
+		// 地址续行: 标签行之后的非标签行, 拼接进地址
+		if addressMode && !isSellerLabel(txt) {
+			if seller.address == "" {
+				seller.address = txt
+			} else {
+				seller.address += ", " + txt
+			}
+			return
 		}
-	}
+	})
+
+	// 兜底: 未解析出地址但出现多行(见上), 保留; 空标签替换 undefined
+	seller.all_status = MYSQL_SELLER_STATUS_INFO_OK
 
 	return nil
 }
