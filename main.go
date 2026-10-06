@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -76,10 +77,19 @@ type flagStruct struct {
 var app appConfig
 var robot Robots
 
-const userAgent = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36`
+// 短 UA 是实测通过 Amazon 风控的组合(2026-10-06, Go 复刻 200/1.3MB 结果页); 完整 Chrome119 UA 无 sec-ch-ua 反而 503
+const userAgent = `Mozilla/5.0`
 
 // cookieTtl: cookie 缓存时间; DB 是唯一事实源,外部随时可改, 故只缓存一小段窗口(原来每请求查一次 DB)
 const cookieTtl = 5 * time.Minute
+
+// 统一请求头。实测(2026-10-06): 完整浏览器指纹头(Chrome UA+Referer+Sec-Fetch, 无对应 sec-ch-ua)被 Amazon 判定 bot→503;
+// 精简头(短 UA + Cookie)稳定 200。其他的交给 Go 标准库自动补(Accept-Encoding: gzip+自动解压)。
+func applyHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", `text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`)
+	req.Header.Set("Accept-Language", `en-US,en;q=0.9`)
+}
 
 func init_config(flag flagStruct) {
 	log.Infof("读取配置文件:%s", flag.config_file)
@@ -117,7 +127,17 @@ func init_rebots() {
 	robotTxt := fmt.Sprintf("https://%s/robots.txt", app.Domain)
 
 	log.Infof("加载文件: %s", robotTxt)
-	txt, err := request_get(robotTxt, userAgent)
+	// robots 加载失败(代理抖动/SOCKS失败)重试3次,别一次失败就 panic
+	var txt string
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		txt, err = request_get(robotTxt, userAgent)
+		if err == nil {
+			break
+		}
+		log.Errorf("加载robots.txt失败(尝试 %d/3): %v", attempt+1, err)
+		sleep(10)
+	}
 	if err != nil {
 		log.Error("网络错误")
 		panic(err)
@@ -142,14 +162,19 @@ func init_mysql() {
 func init_network() {
 	log.Info("网络测试开始")
 
+	// 代理池坏 IP 时 Amazon 会 503,单次失败直接 panic 太脆,重试 3 次再放弃
 	var s searchStruct
 	s.en_key = "Hardware+electrician"
-	_, err := s.request(0)
-	if err != nil {
-		log.Error("网络错误")
-		panic(err)
+	for attempt := 0; attempt < 3; attempt++ {
+		_, err := s.request(0)
+		if err == nil {
+			log.Info("网络测试通过")
+			return
+		}
+		log.Errorf("网络测试失败(尝试 %d/3): %v", attempt+1, err)
+		sleep(10)
 	}
-
+	panic("网络错误")
 }
 func init_signal() {
 	// 创建一个通道来接收操作系统的信号

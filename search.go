@@ -66,18 +66,32 @@ func (s *searchStruct) main() error {
 			continue
 		}
 		for ; s.start < s.end; s.start++ {
-			h, err := s.request(s.start)
-			switch err {
-			case nil:
-				break
-			case ERROR_NOT_404:
-			case ERROR_NOT_503:
-				s.start--
-				sleep(120)
-				continue
-
-			default:
-				log.Error(err)
+			// 坏 IP 在池中比例高: 每页固定重试最多 3 次, 每次换代理(新连接)+30s 间隔
+			// 原实现 503 无限重试 sleep(120), 一个坏 IP 卡死整轮
+			var h *goquery.Document
+			var herr error
+			for attempt := 0; attempt < 3; attempt++ {
+				h, herr = s.request(s.start)
+				if herr == nil {
+					break
+				}
+				switch herr {
+				case ERROR_NOT_404:
+					// 404 = 此页不存在, 跳过不重试
+				case ERROR_NOT_503:
+					log.Warnf("状态码503 重试 %d/3 页面:%d", attempt+1, s.start)
+				default:
+					log.Warnf("请求失败[%v] 重试 %d/3 页面:%d", herr, attempt+1, s.start)
+				}
+				if herr != ERROR_NOT_404 && attempt < 2 {
+					sleep(30)
+				} else if herr == ERROR_NOT_404 {
+					herr = nil // 404 视为正常结束
+					break
+				}
+			}
+			if herr != nil {
+				log.Errorf("页面失败放弃 关键词:%s 页面:%d %v", s.zh_key, s.start, herr)
 				continue
 			}
 			s.get_product_url(h)
@@ -144,28 +158,13 @@ func (s *searchStruct) request(seq int) (*goquery.Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", `text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7`)
-	req.Header.Set("Accept-Language", `zh-CN,zh;q=0.9`)
-	req.Header.Set("cache-control", `max-age=0`)
-	req.Header.Set("device-memory", `8`)
-	req.Header.Set("device-memory", `8`)
-	req.Header.Set("downlink", `1.55'`)
-	req.Header.Set("dpr", `2`)
-	req.Header.Set("ect", `3g`)
-	req.Header.Set("pragma", `400`)
+	applyHeaders(req)
 	if _, err := app.get_cookie(); err != nil {
 		log.Error(err)
 	} else {
 		req.Header.Set("Cookie", app.cookie)
 	}
-	req.Header.Set("upgrade-insecure-requests", `1`)
-	req.Header.Set("Sec-Fetch-Dest", `empty`)
-	req.Header.Set("Sec-Fetch-Mode", `cors`)
-	req.Header.Set("Sec-Fetch-Site", `same-origin`)
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("sec-ch-ua", `"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"`)
-	req.Header.Set("sec-ch-ua-mobile", `?0`)
-	req.Header.Set("sec-ch-ua-platform", `"macOS"`)
+	req.Header.Set("Upgrade-Insecure-Requests", `1`)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -178,6 +177,9 @@ func (s *searchStruct) request(seq int) (*goquery.Document, error) {
 	switch resp.StatusCode {
 	case 200:
 		break
+	case 202:
+		// 202 = Amazon 节流/验证页, 视同 503 重试
+		return nil, ERROR_NOT_503
 	case 404:
 		return nil, ERROR_NOT_404
 	case 503:

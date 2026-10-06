@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,12 +26,32 @@ func rand_range(max int) int {
 	return randSrc.Intn(max)
 }
 func get_socks5_proxy() (proxy.Dialer, error) {
-	// 创建一个SOCKS5代理拨号器
+	// 创建SOCKS5代理拨号器,支持 "user:pass@host:port" 带认证格式(resin 需要)
+	// 代理池坏 IP 多: 打乱顺序逐个试, 直到成功拨号(而非纯随机撞一次)
 	frozen := app.Proxy.Sockc5
 	if len(frozen) == 0 {
 		return nil, fmt.Errorf("没有可用的代理")
 	}
-	return proxy.SOCKS5("tcp", frozen[rand_range(len(frozen))], nil, proxy.Direct)
+	order := rand_range(len(frozen))
+	var lastErr error
+	for i := 0; i < len(frozen); i++ {
+		entry := frozen[(order+i)%len(frozen)]
+		addr := entry
+		var auth *proxy.Auth
+		if k := strings.Index(addr, "@"); k != -1 {
+			cred := addr[:k]
+			addr = addr[k+1:]
+			if j := strings.Index(cred, ":"); j != -1 {
+				auth = &proxy.Auth{User: cred[:j], Password: cred[j+1:]}
+			}
+		}
+		d, err := proxy.SOCKS5("tcp", addr, auth, proxy.Direct)
+		if err == nil {
+			return d, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 var (
